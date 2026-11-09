@@ -62,3 +62,5 @@ have consequences.
   and what changed in each release.
 - [`CHANGELOG.md`](CHANGELOG.md) has technical notes per release.
 - [`docs/INVENTORY_UI_SPEC.md`](docs/INVENTORY_UI_SPEC.md) is the specification of the inventory screen.
+- [Special thanks to guy that created ISSR](https://github.com/mafph/PD2-InsurgencySandstormStyleReloadForNQR/releases/tag/v1.1), i based my magazine system on his mod
+- This mod is completely vibe-coded, btw
