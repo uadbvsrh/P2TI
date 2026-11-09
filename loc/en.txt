@@ -1,0 +1,7 @@
+{
+    "pdti_inventory_title": "Tactical Inventory",
+    "pdti_inventory_desc": "Manage your backpack, tactical rig and quick-access pockets.",
+    "pdti_inventory_loose_desc": "Rounds you pick up are carried in the inventory. Fill a magazine and they leave it again.",
+    "pdti_inventory_deployable_desc": "How many deployables you can place is how many you carry in your rig and pockets. Hold one and press G to make it your deployable.",
+    "pdti_inventory_carry_desc": "The heavier your loadout, the slower you move. Up to 15 kg is free, from 60 kg on you are 40% slower."
+}

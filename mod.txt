@@ -1,0 +1,53 @@
+{
+	"name" : "Payday2TacticalInventory",
+	"description" : "Extraction-shooter inventory with grid backpacks, tactical rigs, quick-access pockets, loose ammunition, magazines that you really load from your rig and deployables that follow what you carry. The InsurgencySandstormStyleReload mod is merged in: magazines and loose ammunition are inventory items, so the two can never get out of step. The inventory screen requires BeardLib.",
+	"author" : "Tactical Inventory Development",
+	"version" : "0.18.7",
+	"blt_version" : 2,
+	"needs_restart" : true,
+	"hooks" : [
+		{
+			"hook_id" : "lib/setups/gamesetup",
+			"script_path" : "lua/main.lua"
+		},
+		{
+			"hook_id" : "lib/managers/menumanager",
+			"script_path" : "lua/main.lua"
+		},
+		{
+			"hook_id" : "lib/units/beings/player/states/playerstandard",
+			"script_path" : "lua/hooks_game.lua"
+		},
+		{
+			"hook_id" : "lib/managers/playermanager",
+			"script_path" : "lua/hooks_player_manager.lua"
+		},
+		{
+			"hook_id" : "lib/setups/gamesetup",
+			"script_path" : "lua/heist_start.lua"
+		},
+		{
+			"hook_id" : "lib/units/beings/player/playermovement",
+			"script_path" : "lua/hooks_movement.lua"
+		},
+		{
+			"hook_id" : "lib/managers/menu/playerinventorygui",
+			"script_path" : "lua/hooks_menu.lua"
+		},
+		{
+			"hook_id" : "lib/managers/menu/missionbriefinggui",
+			"script_path" : "lua/hooks_menu.lua"
+		}
+	],
+	"keybinds" : [
+		{
+			"keybind_id" : "pdti_toggle_inventory",
+			"name" : "Toggle Tactical Inventory",
+			"description" : "Opens or closes the tactical inventory screen in a heist (in the menu: click the Deployable slot of the loadout). Requires BeardLib.",
+			"script_path" : "lua/ui_toggle.lua",
+			"run_in_menu" : false,
+			"run_in_game" : true,
+			"localized" : false
+		}
+	]
+}
