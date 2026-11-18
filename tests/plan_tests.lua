@@ -135,10 +135,20 @@ T("the planned magazines take the real size", m and m.item.data.capacity == 35 a
 
 --------------------------------------------------------- weapon changes
 
+local pistol_mags, pistol_loose = count("mag:secondary"), count("loose:secondary")
+local function kind_count(kind)
+  local n = 0
+  for _, e in ipairs(PDTI.FindItems(function(_, it) return Plan.KindOf(it.data) == kind end)) do
+    n = n + (e.item.item_id == Ammo.MAGAZINE_ITEM and 1 or 0)
+  end
+  return n
+end
 menu_weapons.secondary = { weapon_id = "test_pump", blueprint = {} }
 PDTI.OnUIOpen()
 T("a shotgun loaded shell by shell has no magazines", count("mag:secondary") == 0)
-T("its magazines became loose shells", count("loose:secondary") >= 30, count("loose:secondary"))
+T("the pistol's ammunition stays the pistol's (no magazine became shells)", count("loose:secondary") == 0
+  and kind_count("test_pistol") == pistol_mags + 1, kind_count("test_pistol"))
+T("  shells are brought for the shotgun itself", Plan.Add("loose:secondary") and count("loose:secondary") > 0)
 local ok, why = Plan.Add("mag:secondary")
 T("and no magazine can be added", ok == false and tostring(why):find("round by round") ~= nil, why)
 menu_weapons.secondary = { weapon_id = "test_akimbo", blueprint = {} }
@@ -146,6 +156,9 @@ T("akimbo pistols: a magazine is half the weapon's", Plan.Info("secondary").capa
 Plan.Add("mag:secondary")
 T("their magazine is a 17-round one", Plan.Magazines("secondary")[1].item.data.capacity == 17)
 menu_weapons.secondary = { weapon_id = "test_pistol", blueprint = { "wpn_no_part" } }
+PDTI.OnUIOpen()
+T("the pistol back: all its magazines and rounds as they were", count("mag:secondary") == pistol_mags
+  and count("loose:secondary") == pistol_loose, count("mag:secondary") .. " / " .. count("loose:secondary"))
 
 -- Removing: one less of each.
 local before = count("mag:primary")
@@ -235,6 +248,25 @@ Ammo.OnHeistStart()
 rifle = heist_weapons()
 T("no plan: the weapon gets the game's starting magazines", #real_mags(rifle) == 2, #real_mags(rifle))
 PDTI.SetSessionOnly(false)
+
+-- Each kind of ammunition keeps its own weapon's shape (0.37.7): the size the
+-- game learned for that weapon's parts.
+do
+  in_menu()
+  PDTI.SetEquipment("backpack", "large_backpack")
+  Plan.RememberWeapon({ _name_id = "test_pistol", _blueprint = { "bp_y" } }, { capacity = 21, mag_class = "pistol" })
+  Plan.RememberWeapon({ _name_id = "test_pistol", _blueprint = { "bp_x" } }, { capacity = 12, mag_class = "pistol" })
+  menu_weapons.secondary = { weapon_id = "test_pistol", blueprint = { "bp_y" } }
+  T("a kind's shape: the weapon of that kind in your hands first (its parts)",
+    Plan.KindInfo("test_pistol").capacity == 21, Plan.KindInfo("test_pistol").capacity)
+  menu_weapons.secondary = { weapon_id = "test_akimbo", blueprint = {} }
+  PDTI.AddItemAuto("backpack", "weapon", 1, { uid = 99, weapon_id = "test_pistol", blueprint = "bp_y",
+    category = "secondaries", w = 2, h = 1, weight = 1 }, true)
+  T("  else a weapon of yours of that kind (its parts)", Plan.KindInfo("test_pistol").capacity == 21,
+    Plan.KindInfo("test_pistol").capacity)
+  T("  a weapon nobody knows: its ammunition is left as it is", Plan.KindInfo("gone_gun") == nil)
+  menu_weapons.secondary = { weapon_id = "test_pistol", blueprint = { "wpn_no_part" } }
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

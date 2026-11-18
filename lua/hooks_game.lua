@@ -89,12 +89,24 @@ local function patch_use_item()
     end
 end
 
+local spawned_unit = nil
 local wrapper = function(self, t, dt, paused)
     -- The player is in the heist: from now on nothing is saved, so the next
     -- heist starts again with what was chosen in the menu or the briefing.
-    if PDTI.SetSessionOnly and not PDTI.session_only then
+    -- (Not in the safehouse: that is your base, and what you change is kept.)
+    if PDTI.SetSessionOnly and not PDTI.session_only and not PDTI.InSafehouse() then
         PDTI.SetSessionOnly(true)
         if PDTI.RedrawUI then pcall(PDTI.RedrawUI) end
+    end
+    -- A new player unit (the heist begins, or back from custody): its
+    -- weapons follow your weapon slots (an empty slot: no weapon).
+    if self._unit ~= spawned_unit then
+        spawned_unit = self._unit
+        local armory = PDTI.Armory
+        if armory and armory.OnSpawn then
+            local ok, err = pcall(armory.OnSpawn, self._unit)
+            if not ok and _G.log then _G.log("[PDTI ARMORY] the weapons could not follow your slots: " .. tostring(err)) end
+        end
     end
 
     patch_use_item()
@@ -114,6 +126,7 @@ local wrapper = function(self, t, dt, paused)
         end
         if PDTI.Deployables then
             PDTI.Deployables.EnsureKeyTrigger()
+            if PDTI.Deployables.InstallGameHooks then pcall(PDTI.Deployables.InstallGameHooks) end
         end
         if PDTI.DeployHud then
             pcall(PDTI.DeployHud.Update)
@@ -124,8 +137,30 @@ local wrapper = function(self, t, dt, paused)
             pcall(PDTI.Gear.Tick, input)
             pcall(PDTI.Gear.InstallHooks)
         end
+        -- A weapon part being fitted or taken off in a heist (armory_hotmod.lua).
+        if PDTI.HotMod and PDTI.HotMod.Tick then pcall(PDTI.HotMod.Tick, dt, input) end
         if PDTI.Carry then
             pcall(PDTI.Carry.InstallHooks)
+        end
+        -- Core skill rules: ECM durations, weight -> concealment.
+        if PDTI.Rules then
+            pcall(PDTI.Rules.Install)
+        end
+        -- The skill rework (skills.lua): hooks of classes loaded late.
+        if PDTI.Skills then
+            pcall(PDTI.Skills.Install)
+        end
+        -- Heavy armour: no regeneration once broken, plates (armour.lua).
+        if PDTI.Armour then
+            pcall(PDTI.Armour.InstallHooks)
+            pcall(PDTI.Armour.Tick, input, dt)
+        end
+        -- Safehouse room bonuses (perks.lua): light armour breaking.
+        if PDTI.Perks then
+            pcall(PDTI.Perks.InstallHooks)
+            local unit = self._unit
+            local pd = unit and unit.character_damage and unit:character_damage()
+            if pd then pcall(PDTI.Perks.Tick, pd) end
         end
         -- What the heist uses up of the plan is paid again (the restock).
         if PDTI.Plan and PDTI.Plan.RestockTick then pcall(PDTI.Plan.RestockTick) end
@@ -134,9 +169,16 @@ local wrapper = function(self, t, dt, paused)
             pcall(PDTI.Body.InstallHooks)
             pcall(PDTI.Body.UpdateHud)
         end
+        -- The way home after a job, and the safehouse's spots.
+        if PDTI.Safehouse then pcall(PDTI.Safehouse.GameTick, dt) end
+        -- Extra Heist Info: this mod's buffs in its buff bar.
+        if PDTI.EHIBuffs then pcall(PDTI.EHIBuffs.Poll) end
     end
 
-    if PDTI.IsUIOpen and PDTI.IsUIOpen() then return {} end
+    if PDTI.IsUIOpen and PDTI.IsUIOpen() then
+        if PDTI.UIKeepInputBlocked then pcall(PDTI.UIKeepInputBlocked) end
+        return {}
+    end
     return input
 end
 

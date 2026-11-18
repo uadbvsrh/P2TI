@@ -41,8 +41,10 @@ local function load_part(name)
 end
 
 if not load_part("items") then return end
+load_part("perks")
 if not load_part("inventory") then return end
 if not load_part("ammo") then return end
+load_part("shells")
 load_part("plan")
 if not load_part("item_use") then return end
 if not load_part("ui_model") then return end
@@ -50,15 +52,43 @@ if not load_part("ui_interaction") then return end
 load_part("ammo_hud")
 load_part("ammo_hooks")
 load_part("loot")
+load_part("loot_quality")
+load_part("stash")
+load_part("market")
+load_part("armory")
+load_part("armory_parts")
+load_part("armory_hotmod")
+load_part("save_slot")
+load_part("safehouse")
 load_part("deployables")
 load_part("deploy_hud")
 load_part("loadout")
 load_part("gear")
 load_part("body")
+load_part("armour")
 load_part("carry")
+load_part("skill_rules")
+load_part("skills")
+load_part("skills_medic")
+load_part("doctor_buffs")
+load_part("skills_ammo")
+load_part("skills_silent")
+load_part("skills_ap")
+load_part("skills_ghost")
+load_part("skills_brawler")
+load_part("perk_yakuza")
+load_part("ehi_buffs")
+if PDTI.Skills and PDTI.Skills.Install then pcall(PDTI.Skills.Install) end
+load_part("ui_pictures") -- (the pictures ui_beardlib draws)
 load_part("ui_beardlib") -- optional: needs BeardLib's MenuUI at runtime
 if not load_part("diagnostics") then return end
 load_part("selftest")
+
+-- The way to the safehouse from the main menu (when that state's class is
+-- loaded already; else hooks_home.lua does it once it is).
+if PDTI.Safehouse and PDTI.Safehouse.InstallMenuHooks then pcall(PDTI.Safehouse.InstallMenuHooks) end
+if PDTI.Perks and PDTI.Perks.InstallHooks then pcall(PDTI.Perks.InstallHooks) end
+if PDTI.Safehouse and PDTI.Safehouse.InstallBriefingHooks then pcall(PDTI.Safehouse.InstallBriefingHooks) end
 
 PDTI._loaded = true
 report("Tactical Inventory " .. tostring(PDTI.VERSION) .. " loaded")

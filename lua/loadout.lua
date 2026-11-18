@@ -35,6 +35,11 @@ Loadout.WEAPON_WEIGHTS = {
     { "pistol", 1.5, 0.6 }
 }
 Loadout.DEFAULT_WEAPON = { 4.0, 2.0 }
+-- Throwables that weigh nothing: a match (plain text, any case) in the
+-- throwable's id, its text id or its name. The Laser Chronometer (Espionage
+-- Weapon Pack) is a wristwatch; unknown to the weight list it weighed the
+-- default 0.4 kg a piece (12 kg).
+Loadout.WEIGHTLESS = { "chrono" }
 Loadout.CONCEALMENT_MAX = 30
 
 -- Throwables in kg per piece. Perk deck abilities (a flask, an injector)
@@ -57,6 +62,23 @@ local function text(id, fallback)
     return fallback
 end
 
+-- Is this throwable one of Loadout.WEIGHTLESS?
+function Loadout.Weightless(...)
+    for i = 1, select("#", ...) do
+        local s = select(i, ...)
+        if type(s) == "string" then
+            s = s:lower()
+            for _, pattern in ipairs(Loadout.WEIGHTLESS) do
+                if s:find(pattern, 1, true) then return true end
+            end
+        end
+    end
+    return false
+end
+
+local logged = {}
+local log = PDTI.Logger("PDTI LOADOUT")
+
 -- The weight of a weapon of these categories with this concealment.
 function Loadout.WeaponWeight(categories, concealment)
     local low_conceal, high_conceal = Loadout.DEFAULT_WEAPON[1], Loadout.DEFAULT_WEAPON[2]
@@ -77,7 +99,28 @@ function Loadout.WeaponWeight(categories, concealment)
     return math.floor(weight * 100 + 0.5) / 100
 end
 
+-- A weapon of your slots (the armory): its name and weight are the item's.
+local function hand_entry(slot, d)
+    local tweak = tweak_data.weapon and tweak_data.weapon[d.weapon_id]
+    local categories = tweak and tweak.categories or {}
+    return {
+        slot = slot,
+        id = d.weapon_id,
+        name = tostring(d.name or d.weapon_id),
+        categories = categories,
+        weight = tonumber(d.weight) or Loadout.WeaponWeight(categories, 0),
+        counts_in_load = true
+    }
+end
+
 local function weapon_entry(slot, category)
+    -- Your weapons are grid items: the slot's weapon; an empty slot is no
+    -- weapon (no weight, nothing planned for it).
+    local A = PDTI.Armory
+    if A and A.InUse and A.InUse() then
+        local item = A.HandItem(category)
+        return item and hand_entry(slot, item.data) or nil
+    end
     local bm = managers and managers.blackmarket
     if not bm then return nil end
     local ok, weapon = pcall(function()
@@ -116,14 +159,26 @@ local function throwable_entry()
     end)
     if in_heist == true then pcall(function()
         local peer = managers.network:session():local_peer():id()
+        -- While the player spawns the game has not set the count up yet:
+        -- get_grenade_amount would index nil (and the game logs it as a
+        -- fatal error even inside pcall).
+        local synced = managers.player._global and managers.player._global.synced_grenades
+        if type(synced) ~= "table" or synced[peer] == nil then return end
         local current = managers.player:get_grenade_amount(peer)
         if type(current) == "number" then amount = current end
     end) end
-    local per_piece = tweak.ability and 0 or (Loadout.THROWABLE_WEIGHTS[id] or Loadout.DEFAULT_THROWABLE)
+    local name = text(tweak.name_id, tostring(id))
+    local weightless = Loadout.Weightless(id, tweak.name_id, name)
+    if weightless and not logged[id] then
+        logged[id] = true
+        log(string.format("throwable %s (%s) weighs nothing", tostring(id), name))
+    end
+    local per_piece = (tweak.ability or weightless) and 0
+        or (Loadout.THROWABLE_WEIGHTS[id] or Loadout.DEFAULT_THROWABLE)
     return {
         slot = "throwable",
         id = id,
-        name = text(tweak.name_id, tostring(id)),
+        name = name,
         amount = amount,
         per_piece = per_piece,
         weight = math.floor(per_piece * math.max(0, amount) * 100 + 0.5) / 100,
@@ -181,12 +236,5 @@ function Loadout.LoadWeight()
     for _, entry in ipairs(Loadout.Get()) do
         if entry.counts_in_load then total = total + (entry.weight or 0) end
     end
-    return total
-end
-
--- Every kilogram of the loadout, the armour included (for the screen).
-function Loadout.TotalWeight()
-    local total = 0
-    for _, entry in ipairs(Loadout.Get()) do total = total + (entry.weight or 0) end
     return total
 end

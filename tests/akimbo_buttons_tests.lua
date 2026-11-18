@@ -134,14 +134,14 @@ trigger(wep)
 local pair = Ammo.AkimboPair(wep)
 T("the right button fires the right gun", #shots == 1 and shots[1].gun == "right" and vanilla_fired == 0)
 T("from the right gun's magazine", pair[1] == 20 and pair[2] == 19 and wep.clip == 39, pair[1] .. "," .. pair[2])
-T("with its armour-piercing bullets", near(shots[1].dmg, 8.5) and shots[1].through == true)
+T("with its armour-piercing bullets", near(shots[1].dmg, 13) and shots[1].through == true)
 
 frame({ btn_primary_attack_press = true, btn_primary_attack_state = true })
 trigger(wep)
 pair = Ammo.AkimboPair(wep)
 T("the left button fires the left gun", #shots == 2 and shots[2].gun == "left")
 T("from the left gun's magazine", pair[1] == 19 and pair[2] == 19, pair[1] .. "," .. pair[2])
-T("with its hollow points", near(shots[2].dmg, 13) and shots[2].through == false)
+T("with its hollow points", near(shots[2].dmg, 11) and shots[2].through == false)
 
 -- Again with the left: its magazine now holds fewer rounds than the right
 -- one, and the round still comes out of the left.

@@ -32,7 +32,7 @@ end
 
 function Hud.Text()
     local dep = PDTI.Deployables
-    if not dep or not dep.DisplayName then return nil end
+    if not dep or not dep.DisplayName or PDTI.InSafehouse() then return nil end
     local key = string.upper(tostring(dep.CYCLE_KEY or "x"))
     return "DEPLOY  " .. dep.DisplayName() .. "   [" .. key .. "]"
 end
@@ -77,11 +77,7 @@ local function build(root, text)
     return panel
 end
 
-local function clock()
-    local ok, t = pcall(function() return Application:time() end)
-    if ok and type(t) == "number" then return t end
-    return os.clock()
-end
+local clock = PDTI.AppTime
 
 -- Called every frame from the game hook; looks ten times a second and draws
 -- only when something changed.

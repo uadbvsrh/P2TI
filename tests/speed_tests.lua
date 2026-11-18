@@ -82,6 +82,9 @@ T("a concealable rifle is still heavier than a bulky pistol",
   Loadout.WeaponWeight({ "assault_rifle" }, 30) > Loadout.WeaponWeight({ "pistol" }, 0))
 T("akimbo pistols weigh twice", near(Loadout.WeaponWeight({ "akimbo", "pistol" }, 20), 2 * Loadout.WeaponWeight({ "pistol" }, 20)))
 T("an unknown category gets a default weight", Loadout.WeaponWeight({ "space_gun" }, 15) > 0)
+T("the Laser Chronometer matches (by id, text id or name)", Loadout.Weightless("wpn_chrono")
+  and Loadout.Weightless(nil, "bm_w_CHRONO") and Loadout.Weightless(nil, nil, "Laser Chronometer"))
+T("other throwables do not match", not Loadout.Weightless("frag", "bm_grenade_frag", "Frag Grenade"))
 
 ------------------------------------------------------------ the loadout
 
@@ -119,6 +122,16 @@ T("the armour is not counted twice in the load", near(Carry.LoadWeight(), slots.
 grenade_id = "chico_injector"
 T("a perk deck ability weighs nothing", near(Loadout.Get()[3].weight, 0))
 grenade_id = "frag"
+tweak_data.blackmarket.projectiles.chrono_test = { name_id = "bm_grenade_chrono_test" }
+grenade_id, grenades = "chrono_test", 30
+for _, e in ipairs(Loadout.Get()) do slots[e.slot] = e end
+T("the Laser Chronometer (30 pieces, unknown to the list): 0 kg", slots.throwable.weight == 0
+  and slots.throwable.per_piece == 0, slots.throwable.weight)
+T("and nothing in the load", near(Carry.LoadWeight(), slots.primary.weight + slots.secondary.weight), Carry.LoadWeight())
+grenade_id, grenades = "unknown_nade", 30
+tweak_data.blackmarket.projectiles.unknown_nade = { name_id = "bm_grenade_unknown" }
+T("another unknown throwable keeps the default weight", near(Loadout.Get()[3].weight, 12))
+grenade_id, grenades = "frag", 3
 armour_id = "level_1"
 T("a suit gives no slowdown (its bonus stays the game's)", near(Carry.ArmourFactor(), 1))
 armour_id = "level_7"

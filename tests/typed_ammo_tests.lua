@@ -103,7 +103,7 @@ clear_mags(key)
 Ammo.AddMagazineKey(key, 45, info, { "rig" }, { size = "extended", bullet = "standard" })
 Ammo.AddMagazineKey(key, 20, info, { "pockets" }, { size = "compact", bullet = "ap" })
 local next_mag = Ammo.NextMagazine(wep)
-T("the pockets come before the rig, whatever is fuller", next_mag and next_mag.container == "pockets" and next_mag.bullet == "ap")
+T("two full magazines: the pockets come before the rig", next_mag and next_mag.container == "pockets" and next_mag.bullet == "ap")
 T("a reload into a compact magazine is faster",
   near(NewRaycastWeaponBase.reload_speed_multiplier(wep), 1 / 0.85), NewRaycastWeaponBase.reload_speed_multiplier(wep))
 
@@ -131,13 +131,15 @@ do
   T("and its armour piercing", near(NewRaycastWeaponBase.armor_piercing_chance(w), 0.25))
   Ammo.SetLoaded(w, { size = "standard", bullet = "hollow" })
   Ammo.ApplyLoaded(w)
-  T("hollow points: x1.3 damage", near(NewRaycastWeaponBase._get_current_damage(w, 1), 13))
+  T("hollow points: x1.1 damage", near(NewRaycastWeaponBase._get_current_damage(w, 1), 11))
   T("never pierce armour plates", NewRaycastWeaponBase.armor_piercing_chance(w) == 0)
-  T("ignore the armour-piercing skill and shoot through nothing",
-    w._use_armor_piercing == false and w._can_shoot_through_enemy == false and w._can_shoot_through_shield == false)
+  -- 0.25.0: the vanilla AP skill is switched off with the bullets on (Surefire),
+  -- so hollow points leave the weapon's own flag as it is.
+  T("shoot through nothing (the weapon's own armour-piercing flag stays)",
+    w._use_armor_piercing == true and w._can_shoot_through_enemy == false and w._can_shoot_through_shield == false)
   Ammo.SetLoaded(w, { size = "standard", bullet = "ap" })
   Ammo.ApplyLoaded(w)
-  T("armour piercing: x0.85 damage", near(NewRaycastWeaponBase._get_current_damage(w, 1), 8.5))
+  T("armour piercing: x1.3 damage, more than hollow points", near(NewRaycastWeaponBase._get_current_damage(w, 1), 13))
   T("always pierce plates", NewRaycastWeaponBase.armor_piercing_chance(w) == 1)
   T("and shoot through enemies and shields", w._can_shoot_through_enemy == true and w._can_shoot_through_shield == true)
   Ammo.SetLoaded(w, { size = "standard", bullet = "standard" })
@@ -250,9 +252,9 @@ do
     w.clip = w.clip - 1
     return NewRaycastWeaponBase._get_current_damage(w, 1)
   end
-  T("the first shot is armour piercing", near(shoot(), 8.5) and NewRaycastWeaponBase.armor_piercing_chance(w) == 1)
-  T("the second too", near(shoot(), 8.5))
-  T("then the hollow points", near(shoot(), 13) and NewRaycastWeaponBase.armor_piercing_chance(w) == 0
+  T("the first shot is armour piercing", near(shoot(), 13) and NewRaycastWeaponBase.armor_piercing_chance(w) == 1)
+  T("the second too", near(shoot(), 13))
+  T("then the hollow points", near(shoot(), 11) and NewRaycastWeaponBase.armor_piercing_chance(w) == 0
     and w._can_shoot_through_enemy == false)
   T("the HUD colours the parts of the magazine", (function()
     local segs = Ammo.HudSegments({ rounds = 30, load = { { "ap", 10 }, { "hollow", 20 } } })
@@ -295,12 +297,12 @@ do
     w.clip = w.clip - 1
     dmg = NewRaycastWeaponBase._get_current_damage(w, 1)
   end
-  T("the armour-piercing gun fires while it is fuller", near(dmg, 8.5) and w._can_shoot_through_enemy == true, dmg)
+  T("the armour-piercing gun fires while it is fuller", near(dmg, 13) and w._can_shoot_through_enemy == true, dmg)
   w.clip = w.clip - 1
   dmg = NewRaycastWeaponBase._get_current_damage(w, 1)
   local p2 = Ammo.AkimboPair(w)
   T("then a shot from the hollow-point gun, as the shot is fired",
-    near(dmg, 13) and w._can_shoot_through_enemy == false and w._can_shoot_through_shield == false,
+    near(dmg, 11) and w._can_shoot_through_enemy == false and w._can_shoot_through_shield == false,
     dmg .. " " .. p2[1] .. "," .. p2[2])
   local olds = 0
   for _, m in ipairs(Ammo.AllMagazines(k)) do
@@ -475,14 +477,30 @@ _G.PDTI.Loadout.Get = function()
   return { { slot = "primary", name = "Test AR", weight = 3.4 }, { slot = "secondary", name = "Test pistol", weight = 1.1 },
     { slot = "throwable", name = "Frag", amount = 3, weight = 1.2 }, { slot = "armour", name = "Suit", weight = 0 } }
 end
+Plan.Add("loose:primary:hollow")
 T("the inventory opens in the menu", PDTI.ToggleUI() == true)
 local function windows() return ENV.menus[#ENV.menus].children end
-local left, right = windows()[1], windows()[2]
+local function shop()
+  for _, w in ipairs(windows()) do if w.params.name == "pdti_shop" then return w end end
+end
+local left, right = windows()[1], shop()
 T("each weapon is a box with its weight", left:find("weapon_box_primary") ~= nil
   and tostring(left:find("weapon_box_primary").params.text):find("3.4 kg") ~= nil and left:find("weapon_box_secondary") ~= nil)
 T("next to its magazine slot", left:find("cell_gun_primary_0_0") ~= nil and left:find("cell_gun_secondary_1_0") ~= nil)
 T("the throwable and the armour stay lines", left:find("loadout_line_3") ~= nil and left:find("loadout_line_1") == nil)
-T("the drum in the slot shows its bullets", tostring(left:find("cell_gun_primary_0_0").params.text) == "75 HP")
+T("the drum in the slot shows its bullets", tostring(left:find("cell_gun_primary_0_0").params.text) == "75\nHP")
+do
+  local stack = PDTI.FindItems(function(_, it) return it.item_id == Ammo.LOOSE_ITEM and Plan.KindOf(it.data) == "test_ar"
+    and it.data.bullet == "hollow" end)[1]
+  local text = nil
+  for _, w in ipairs(windows()) do
+    local cell = stack and w:find(string.format("cell_%s_%d_%d", stack.container, stack.item.x, stack.item.y))
+    if cell then text = tostring(cell.params.text) end
+  end
+  local tag = Ammo.WeaponTag("test_ar")
+  T("loose rounds are labelled by their weapon, not the slot", text ~= nil and text:sub(1, #tag) == tag
+    and not text:find("PRI", 1, true), text)
+end
 T("the size buttons for the magazines you add", right:find("bring_pick_size_primary_compact") ~= nil
   and right:find("bring_gun_size_primary_drum") == nil)
 T("the rounds of each bullet", right:find("bring_pick_plus_primary_hollow") ~= nil
@@ -491,21 +509,59 @@ T("loose rounds by bullet", right:find("bring_plus_loose_primary_hollow") ~= nil
 T("the pistol keeps its plain rows", right:find("bring_plus_loose_secondary") ~= nil and right:find("bring_pick_size_secondary_drum") == nil)
 right:find("bring_pick_size_primary_extended"):click()
 T("a click chooses the size", PDTI.GetPlanSlot("primary").pick_size == "extended")
-right = windows()[2]
+right = shop()
 right:find("bring_pick_plus_primary_standard"):click()
 T("+ adds standard rounds to the load", Plan.PickCount("primary", "standard") == 5)
-right = windows()[2]
+right = shop()
 right:find("bring_pick_flip_primary"):click()
 T("Flip in the menu", Ammo.LoadTop(Plan.PickSpec("primary").load) == "standard")
-right = windows()[2]
+right = shop()
 right:find("bring_plus_mag_primary"):click()
 local last = nil
 for _, e in ipairs(Plan.Magazines("primary")) do if e.item.data.size == "extended" then last = e end end
 T("+ adds a magazine of the chosen kind", last ~= nil and last.item.data.load == "standard:5,hollow:10,ap:10",
   last and last.item.data.load)
+-- Ctrl+click: "+" fills the rest of the magazine with that bullet, "-" takes
+-- all of it out.
+do
+  local cap = Plan.PickSpec("primary").capacity
+  local std, ap = Plan.PickCount("primary", "standard"), Plan.PickCount("primary", "ap")
+  local saved_input, saved_ids = rawget(_G, "Input"), rawget(_G, "Idstring")
+  _G.Idstring = saved_ids or function(s) return s end
+  _G.Input = { keyboard = function() return { down = function() return true end } end }
+  right = shop()
+  right:find("bring_pick_plus_primary_hollow"):click()
+  T("Ctrl+click + fills the magazine with that bullet",
+    Plan.PickCount("primary", "hollow") == cap - std - ap and Plan.PickSpec("primary").rounds == cap,
+    Plan.PickCount("primary", "hollow") .. " of " .. cap)
+  T("the other bullets stay", Plan.PickCount("primary", "standard") == std and Plan.PickCount("primary", "ap") == ap)
+  right = shop()
+  right:find("bring_pick_minus_primary_ap"):click()
+  T("Ctrl+click - takes that bullet out", Plan.PickCount("primary", "ap") == 0
+    and Plan.PickCount("primary", "hollow") == cap - std - ap)
+  _G.Input, _G.Idstring = saved_input, saved_ids
+  local full_ok = Plan.FillPick("primary", "hollow")
+  T("FillPick fills what is left", full_ok and Plan.PickSpec("primary").rounds == cap)
+  T("FillPick on a full magazine is refused", select(2, Plan.FillPick("primary", "ap")) == "the magazine is full")
+  T("ClearPick of a bullet that is not in it is refused", Plan.ClearPick("primary", "ap") == false)
+  -- Back to what the tests below expect.
+  Plan.SetPickCount("primary", "hollow", 0)
+  Plan.SetPickCount("primary", "ap", ap)
+  right = shop()
+  T("a plain click still adds one step", (function()
+    local before = Plan.PickCount("primary", "standard")
+    right:find("bring_pick_plus_primary_standard"):click()
+    local added = Plan.PickCount("primary", "standard") - before
+    right = shop()
+    right:find("bring_pick_minus_primary_standard"):click()
+    return added == Plan.PickStep("primary")
+  end)())
+  T("the Ctrl+click hint is shown", shop():find("bring_pick_hint") ~= nil)
+end
 left, right = windows()[1], windows()[2]
-T("the windows stay within the screen", left.ph <= 620 and right.ph <= 620 and left.pw + right.pw <= 640,
-  left.pw .. "x" .. left.ph .. " + " .. right.pw .. "x" .. right.ph)
+T("the windows stay within the screen", left.ph <= 620 and right.ph <= 620 and shop().ph <= 620
+  and left.pw + right.pw + shop().pw <= 1240,
+  left.pw .. "x" .. left.ph .. " + " .. right.pw .. "x" .. right.ph .. " + " .. shop().pw .. "x" .. shop().ph)
 local function overlaps(win)
   local list, bad = {}, {}
   for _, c in ipairs(win.children) do
@@ -535,18 +591,29 @@ T("hollow points are red", cell and type(cell.params.background_color) == "table
   and math.abs((cell.params.background_color[1] or 0) - red[1]) < 0.01, cell and tostring(cell.params.background_color[1]))
 PDTI.SetUIOpen(false)
 
--- Changing to a weapon without sizes: the magazines become plain ones.
+-- Changing to another weapon: the magazines stay the first weapon's, with
+-- their sizes and bullets; the new weapon has none of them.
 in_menu()
 PDTI.LoadProfile()
+local ar_mags = #Plan.Magazines("primary")
 menu_weapons.primary = { weapon_id = "test_rifle", blueprint = { "wpn_no_part" } }
 tweak_data.weapon.test_rifle.CLIP_AMMO_MAX = 30
 Plan.Refresh()
-local plain = Plan.Magazines("primary")[1]
-T("another weapon type: the magazines lose their size and bullets",
-  plain and plain.item.data.size == nil and plain.item.data.bullet == nil and plain.item.data.load == nil
-  and plain.item.data.capacity == 30)
+local kept = PDTI.FindItems(function(name, it)
+  return it.item_id == Ammo.MAGAZINE_ITEM and Plan.KindOf(it.data) == "test_ar" and not PDTI.IsGunSlot(name)
+end)
+T("another weapon: the magazines stay the first weapon's, sizes and bullets kept",
+  #Plan.Magazines("primary") == 0 and #kept == ar_mags + 1 and kept[1] and kept[1].item.data.size ~= nil
+  and kept[1].item.data.bullet ~= nil, #kept .. " of " .. ar_mags)
+T("  the first weapon's loaded magazine came out of the gun into the inventory (the rifle gets its own)",
+  #Plan.GunMagazines("primary") == 1 and Plan.KindOf(Plan.GunMagazines("primary")[1].item.data) == "test_rifle")
 PDTI.LoadProfile()
 menu_weapons.primary = { weapon_id = "test_ar", blueprint = { "wpn_no_part" } }
+Plan.Refresh()
+local back = gun_items("primary")[1]
+T("the first weapon back: the magazine that left its gun is in it again", back and back.data.size == "drum"
+  and back.data.bullet == "hollow" and Plan.KindOf(back.data) == "test_ar" and #Plan.Magazines("primary") == ar_mags,
+  back and tostring(back.data.size))
 
 
 -- A plan of 0.16.0 (no magazine in the weapon's slot): the older "Gun"
@@ -590,9 +657,19 @@ T("and loose armour-piercing rounds", Ammo.DevSpawnLoose("primary", "ap") == tru
 PDTI.SetEquipment("backpack", "large_backpack")
 T("the inventory opens in the heist", PDTI.ToggleUI() == true)
 right = windows()[2]
-right:find("spawn_bullet_hollow"):click()
+T("the spawner has a row per ammunition category", right:find("spawn_cat_rifle") ~= nil
+  and right:find("spawn_cat_shell") ~= nil and right:find("spawn_cat_lmg") ~= nil
+  and right:find("spawn_bullet_shell_slug") ~= nil and right:find("spawn_bullet_lmg_standard") ~= nil
+  and right:find("spawn_bullet_lmg_ap") == nil)
+right:find("spawn_bullet_shell_slug"):click()
 right = windows()[2]
-T("the spawner's bullet buttons choose", right:find("spawn_mag_primary").params.text == "PRI magazine HP",
+local m0 = #Ammo.AllMagazines(rk)
+right:find("spawn_mag_primary"):click()
+T("shotgun shells for a rifle are refused with the reason", #Ammo.AllMagazines(rk) == m0)
+right = windows()[2]
+right:find("spawn_bullet_rifle_hollow"):click()
+right = windows()[2]
+T("the spawner's bullet buttons choose", right:find("spawn_mag_primary").params.text == "PRI magazine AR/SMG HP",
   right:find("spawn_mag_primary").params.text)
 local c0 = 0
 for _, m in ipairs(Ammo.AllMagazines(rk)) do if m.bullet == "hollow" then c0 = c0 + 1 end end

@@ -216,7 +216,8 @@ PDTI.SetSessionOnly(false)
 ENV.game.unit = nil
 Plan.Refresh()
 local plan_gun = slot_items()[1]
-T("in the menu the slot holds the plan's magazine", plan_gun and plan_gun.data.in_gun == nil and plan_gun.data.plan_slot == "primary")
+T("in the menu the slot holds the plan's magazine (the weapon's)", plan_gun and plan_gun.data.in_gun == nil
+  and plan_gun.data.plan_weapon == "test_ar")
 Ammo.SyncGunSlot(ENV.make_weapon("test_ar", { "wpn_no_part" }, 30))
 T("the menu does not mirror any gun", #slot_items() == 1 and slot_items()[1].instance_id == plan_gun.instance_id)
 
@@ -258,7 +259,214 @@ PDTI.SetUIOpen(false)
 PDTI.SetSessionOnly(false)
 PDTI.LoadProfile()
 T("after the heist the plan's magazine is back in the slot", #slot_items() == 1
-  and slot_items()[1].data.in_gun == nil and slot_items()[1].data.plan_slot == "primary")
+  and slot_items()[1].data.in_gun == nil and slot_items()[1].data.plan_weapon == "test_ar")
+
+----------------------------- a weapon swapped in the heist (0.37.5)
+-- A weapon put into your hands in the heist (picked up, or out of the
+-- backpack) has its own magazine in the slot: the one of the gun that left
+-- your hands went with that gun.
+
+do
+  local old = fresh("test_ar", 30)
+  sync(old)
+  local old_id = slot_items()[1].instance_id
+  local new = ENV.make_weapon("test_rifle", { "wpn_mag_test" }, 30, { _selection = 2 })
+  current.unit:set_weapon(new)
+  Ammo.EnsureSupply(new)
+  new.clip = 30
+  Ammo.SyncTotal(new)
+  sync(new)
+  local ni = Ammo.Identify(new)
+  local it = slot_items()[1]
+  T("another weapon in your hands: its own magazine in the slot, the old gun's gone with it", #slot_items() == 1
+    and it.instance_id ~= old_id and it.data.queue_key == ni.key and it.data.in_gun == true, #slot_items())
+  T("  its magazine can be taken out (no false 'no room')", Ammo.UnloadPlaces(new) ~= nil)
+  local again = ENV.make_weapon("test_rifle", { "wpn_mag_test" }, 30, { _selection = 2 })
+  current.unit:set_weapon(again)
+  again.clip = 12
+  Ammo.SyncTotal(again)
+  sync(again)
+  T("  the same model again (another gun): its own magazine, with its own rounds", #slot_items() == 1
+    and slot_items()[1].instance_id ~= it.instance_id and slot_items()[1].data.rounds == 12)
+  sync(again)
+  T("  the gun in hand keeps its magazine", #slot_items() == 1 and Ammo.UnloadPlaces(again) ~= nil)
+  local pump = ENV.make_weapon("test_pump", { "wpn_no_part" }, 6, { _selection = 2, _use_shotgun_reload = true })
+  current.unit:set_weapon(pump)
+  sync(pump)
+  T("  a shotgun loaded shell by shell: no magazine in the slot", #slot_items() == 0)
+  -- A magazine taken out of the gun on purpose is yours (not in the gun).
+  local w2 = fresh("test_ar", 30)
+  sync(w2)
+  local gid = slot_items()[1].instance_id
+  T("Ammo.DropGunLeftovers keeps the gun's own", Ammo.DropGunLeftovers("gun_primary", w2._pdti_gun_items) == 0
+    and #slot_items() == 1)
+  T("  and takes a gone gun's", Ammo.DropGunLeftovers("gun_primary") == 1 and #slot_items() == 0
+    and PDTI.FindItem("gun_primary", gid) == nil)
+  w2._pdti_unarmed = true -- the armory's stand-in when you hold no weapon
+  T("the stand-in is not a gun to the ammunition system", Ammo.Identify(w2) == nil)
+  w2._pdti_unarmed = nil
+  T("  (the same weapon is one otherwise)", Ammo.Identify(w2) ~= nil)
+end
+
+------------------------ the gun's magazine goes with the weapon (0.37.7)
+-- A weapon leaving your hands keeps what is in its gun (its item holds it);
+-- put back, it has the same magazine, not a free full one.
+
+do
+  local w = fresh("test_ar", 30)
+  sync(w)
+  w.clip = 22
+  sync(w)
+  local state = Ammo.GunState(w)
+  T("a weapon leaving your hands: its gun is read (one magazine, its rounds, its weight)", state and state.gun_set == 1
+    and state.gun_n == 1 and state.gun1_rounds == 22 and state.gun1_size == "standard" and state.gun_weight > 0
+    and state.gun_in == 0, state and state.gun1_rounds)
+  local carried = Ammo.MagazineRounds(Ammo.Identify(w).key)
+  local back = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+  current.unit:set_weapon(back)
+  back.clip = 30 -- the game spawns it full
+  T("put back into your hands: the same magazine, not a full one", Ammo.LoadGun(back, state) and back.clip == 22
+    and #slot_items() == 1 and slot_items()[1].data.rounds == 22 and slot_items()[1].data.in_gun == true, back.clip)
+  sync(back)
+  T("  the slot keeps it as the gun's", #slot_items() == 1 and slot_items()[1].data.rounds == 22)
+  T("  no free rounds: the total is what you carry", back.total == 22 + carried, back.total .. " vs " .. (22 + carried))
+  state.gun1_size, state.gun1_bullet, state.gun1_load, state.gun1_rounds = "extended", "ap", "ap:40", 40
+  local spec = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+  current.unit:set_weapon(spec)
+  spec.clip = 30
+  T("  its magazine's size and bullets come back too", Ammo.LoadGun(spec, state) and spec.clip == 40
+    and slot_items()[1].data.size == "extended" and slot_items()[1].data.bullet == "ap", spec.clip)
+  local e = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+  current.unit:set_weapon(e)
+  e.clip = 30
+  T("a weapon whose magazine you took out comes back without one", Ammo.LoadGun(e, Ammo.GunFields({}))
+    and e.clip == 0 and e._issr_mag_gone == true and #slot_items() == 0, e.clip)
+  local f = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+  current.unit:set_weapon(f)
+  f.clip = 30
+  T("a weapon never settled keeps the game's full magazine", Ammo.LoadGun(f, { uid = 5 }) == false and f.clip == 30)
+  T("  one whose magazine is in the gun already is not loaded again",
+    Ammo.LoadGun(f, { gun_set = 1, gun_in = 1, gun_n = 0 }) == false and f.clip == 30)
+  local chambered = Ammo.GunFields({ { rounds = 10, size = "standard", bullet = "standard", load = "standard:10" } })
+  chambered.gun_chamber = 1
+  f.get_chamber = function() return 1 end
+  T("  the round in the chamber stays in it", Ammo.LoadGun(f, chambered) and f.clip == 11, f.clip)
+  local pump = fresh("test_pump", 6)
+  pump._use_shotgun_reload = true
+  pump.clip = 4
+  local ps = Ammo.GunState(pump)
+  T("a shotgun loaded shell by shell: its shells are read", ps and ps.gun_clip == 4 and ps.gun_n == 0, ps and ps.gun_clip)
+  local pump2 = ENV.make_weapon("test_pump", { "wpn_no_part" }, 6, { _selection = 2, _use_shotgun_reload = true })
+  current.unit:set_weapon(pump2)
+  pump2.clip = 6
+  T("  and come back with it", Ammo.LoadGun(pump2, ps) and pump2.clip == 4, pump2.clip)
+  local ak = fresh("test_akimbo_smg", 40)
+  sync(ak)
+  ak._pdti_pair = { 20, 7 }
+  ak.clip = 27
+  sync(ak)
+  local as = Ammo.GunState(ak)
+  T("akimbo: both guns' magazines are read", as and as.gun_n == 2 and as.gun1_rounds == 20 and as.gun2_rounds == 7,
+    as and (tostring(as.gun1_rounds) .. "/" .. tostring(as.gun2_rounds)))
+  local ak2 = ENV.make_weapon("test_akimbo_smg", { "wpn_no_part" }, 40, { _selection = 2 })
+  current.unit:set_weapon(ak2)
+  ak2.clip = 40
+  T("  and both come back", Ammo.LoadGun(ak2, as) and ak2.clip == 27 and #slot_items() == 2, ak2.clip)
+  local one = Ammo.GunFields({ { rounds = 15, size = "standard", bullet = "standard", load = "standard:15" } })
+  local ak3 = ENV.make_weapon("test_akimbo_smg", { "wpn_no_part" }, 40, { _selection = 2 })
+  current.unit:set_weapon(ak3)
+  ak3.clip = 40
+  T("  one gun emptied: only the other has a magazine", Ammo.LoadGun(ak3, one) and ak3.clip == 15
+    and #slot_items() == 1 and ak3._pdti_gun_empty and ak3._pdti_gun_empty[2] == true, ak3.clip)
+  T("the stored magazines: at most two (one per gun)", #Ammo.StoredMagazines({ gun_n = 3 }) == 2)
+  local m = { rounds = 30, capacity = 30, mag_class = "assault_rifle" }
+  local w1, w2 = Ammo.GunFields({ m }).gun_weight, Ammo.GunFields({ m, m }).gun_weight
+  T("  their weight: all of them", w1 > 0 and math.abs(w2 - 2 * w1) < 1e-9, w2 .. " vs " .. w1)
+end
+
+do
+  -- What is read from a gun: only magazines it has, and the round in the chamber.
+  local e = fresh("test_ar", 30)
+  sync(e)
+  Ammo.LoadGun(e, Ammo.GunFields({}))
+  T("a gun without a magazine is read as one without", Ammo.GunState(e).gun_n == 0)
+  local real_wis = Ammo.WeaponInSlot
+  Ammo.WeaponInSlot = function(slot) return slot == "primary" and e or nil end
+  local okf, whyf = PDTI.AddItem("gun_primary", Ammo.MAGAZINE_ITEM, 0, 0, false, 1,
+    { queue_key = "other|mag", slot = "primary", rounds = 5, capacity = 30 })
+  T("in a heist only a magazine of the gun in that slot goes into its box", okf == false
+    and tostring(whyf):find("this weapon", 1, true) ~= nil, whyf)
+  Ammo.WeaponInSlot = real_wis
+  e.get_chamber = function() return 1 end
+  Ammo.LoadGun(e, Ammo.GunFields({ { rounds = 10, size = "standard", bullet = "standard", load = "standard:10" } }))
+  e.clip = 11
+  local st2 = Ammo.GunState(e)
+  T("  a chambered round: 1 in the chamber, 10 in the magazine", st2.gun_chamber == 1 and st2.gun1_rounds == 10,
+    tostring(st2.gun_chamber) .. "/" .. tostring(st2.gun1_rounds))
+  local pump = fresh("test_pump", 6)
+  pump._use_shotgun_reload = true
+  local pinfo = Ammo.Identify(pump)
+  local ps = Ammo.GunState(pump)
+  T("a shotgun's loaded shell is read", ps and (not pinfo.typed or (ps.gun1_bullet ~= ""
+    and ps.gun1_bullet == Ammo.CurrentBullet(pump))), ps and ps.gun1_bullet)
+  T("heist ammunition is labelled by its weapon (round by round too)",
+    Ammo.LooseData(pinfo.key, pinfo).wtag == Ammo.WeaponTag("test_pump") and Ammo.WeaponTag("test_pump") ~= nil)
+  local rifle = ENV.make_weapon("test_rifle", { "wpn_mag_test" }, 30, { _selection = 2 })
+  local rinfo = Ammo.Identify(rifle)
+  T("  a magazine of the game's sizes too", rinfo and Ammo.MagazineData(rinfo.key, 10, rinfo).wtag == Ammo.WeaponTag("test_rifle"))
+  tweak_data.weapon.tag_one = { name_id = "AMCAR Rifle" }
+  tweak_data.weapon.tag_two = { name_id = "Akimbo Chimano 88 Pistols" }
+  local real_loc = managers.localization
+  managers.localization = { text = function(_, id) return id end }
+  T("a weapon's short name: its first word, akimbo as 2x", Ammo.WeaponTag("tag_one") == "AMCAR"
+    and Ammo.WeaponTag("tag_two") == "2xChima", Ammo.WeaponTag("tag_two"))
+  managers.localization = real_loc
+end
+
+do
+  -- Ammunition chosen in the menu: a weapon put into your hands takes its
+  -- kind's first, then keeps its own magazine.
+  PDTI.Reset()
+  Ammo.Reset()
+  Ammo.OnHeistStart()
+  PDTI.SetSessionOnly(true)
+  PDTI.SetAmmoPlanned(true)
+  local unit = ENV.make_unit()
+  local w = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+  unit:set_weapon(w)
+  current.unit = unit
+  w.clip = 30
+  T("planned ammunition: a weapon put into your hands keeps its own magazine",
+    Ammo.LoadGun(w, Ammo.GunFields({ { rounds = 12, size = "standard", bullet = "standard", load = "standard:12" } }))
+    and w.clip == 12, w.clip)
+  Ammo.EnsureSupply(w)
+  T("  (its kind's ammunition was taken first: nothing changes after)", w.clip == 12, w.clip)
+  -- Your weapon in hand at the start of a heist, its magazine box empty:
+  -- what the weapon item holds.
+  local real_inuse = PDTI.Armory.InUse
+  PDTI.Armory.InUse = function() return true end
+  local function start(fields)
+    PDTI.Reset()
+    Ammo.Reset()
+    Ammo.OnHeistStart()
+    PDTI.SetSessionOnly(true)
+    PDTI.SetAmmoPlanned(true)
+    local data = { uid = 7, weapon_id = "test_ar", category = "primaries", picked = true, w = 4, h = 2, weight = 3 }
+    for k, v in pairs(fields) do data[k] = v end
+    PDTI.AddItem("hand_primary", "weapon", 0, 0, false, 1, data)
+    local g = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30, { _selection = 2 })
+    unit:set_weapon(g)
+    g.clip = 30
+    Ammo.EnsureSupply(g)
+    return g
+  end
+  local emptied = start(Ammo.GunFields({}))
+  T("your weapon emptied in the menu starts the heist without a magazine", emptied.clip == 0
+    and emptied._issr_mag_gone == true, emptied.clip)
+  local kept = start(Ammo.GunFields({ { rounds = 12, size = "standard", bullet = "standard", load = "standard:12" } }))
+  T("  one holding its magazine starts with that one", kept.clip == 12, kept.clip)
+  PDTI.Armory.InUse = real_inuse
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

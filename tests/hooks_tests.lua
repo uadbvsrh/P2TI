@@ -62,7 +62,12 @@ T("the loot follows every frame", loot_ticks == 1, loot_ticks)
 PlayerStandard._get_input({}, 2, 0.016, true)
 T("nothing runs while paused", ticks == 1 and loot_ticks == 1)
 PDTI.IsUIOpen = function() return true end
+local kept = 0
+local real_keep = PDTI.UIKeepInputBlocked
+PDTI.UIKeepInputBlocked = function() kept = kept + 1 end
 local blocked = PlayerStandard._get_input({}, 3, 0.016, false)
+T("screen open: the controls are kept off every frame", kept == 1)
+PDTI.UIKeepInputBlocked = real_keep
 T("R and every other key are dropped while the screen is open",
   next(blocked) == nil and calls.orig == 3)
 PDTI.IsUIOpen = function() return false end

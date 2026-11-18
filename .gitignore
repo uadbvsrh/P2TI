@@ -1,0 +1,4 @@
+# Release zips go to GitHub Releases, not into the repository.
+*.zip
+# A linter's cache.
+.ruff_cache/

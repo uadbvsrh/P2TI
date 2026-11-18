@@ -101,15 +101,16 @@ shoot(pd, "arm_l", 3)
 T("the armour stops a hit, the parts keep their health", near(hp("arm_l"), 4) and pd.armor == 2)
 pd.armor = 0
 
--- The left arm goes black: what is left over goes on at 70%.
+-- The left arm goes black: what is left over goes on at 75%, to the body
+-- only (0.22.0).
 shoot(pd, "arm_l", 9)
 T("the arm is black", Body.IsBlack("arm_l"))
--- 5 over, 3.5 spread over the five other parts, 0.7 each.
-T("the rest spreads at 70% over the others", near(hp("body"), 14.8) and near(hp("head"), 2.8)
-  and near(hp("arm_r"), 5.3), hp("body"))
+-- 5 over, 3.75 to the body.
+T("the rest goes at 75% to the body only", near(hp("body"), 11.75) and near(hp("head"), 3.5)
+  and near(hp("arm_r"), 6) and near(hp("leg_l"), 6.5), hp("body"))
 T("still the sum", sum_ok(pd), pd._health .. " " .. Body.Sum())
 shoot(pd, "arm_l", 5)
-T("a hit on a black arm spreads too", Body.IsBlack("arm_l") and near(hp("body"), 14.1) and near(hp("leg_r"), 5.1),
+T("a hit on a black arm goes to the body too", Body.IsBlack("arm_l") and near(hp("body"), 8) and near(hp("leg_r"), 6.5),
   hp("body"))
 T("not down while the head lives", downs == 0 and not pd.downed)
 
@@ -132,7 +133,8 @@ T("the head at 0: you go down", downs == 1 and pd.downed and pd._health == 0, pd
 T("though the other parts still have health", Body.Sum() > 30, Body.Sum())
 pd:revive()
 T("revived: the head has 1 HP on the screen", near(hp("head"), 0.1) and not pd.downed, hp("head"))
-T("the rest as it was", near(hp("body"), 15.5 - 0.1, 0.2) and sum_ok(pd), hp("body"))
+-- The 0.5 over the head went on at 75% to the body.
+T("the rest as it was", near(hp("body"), 15.125) and near(hp("arm_l"), 6) and sum_ok(pd), hp("body"))
 
 -- A black arm stays black after a revive.
 pd = player()
@@ -155,6 +157,43 @@ pd:change_health(2)  -- a skill heals
 T("skills do not heal black parts either", Body.IsBlack("arm_l"))
 pd:recover_health()  -- the medic bag
 T("a medic bag heals every part, black ones too", near(hp("arm_l"), 6) and near(pd._health, 44), pd._health)
+
+-- Perks and skills heal one part at a time, the most hurt first (0.19.8).
+-- Max 44: body 15.5, leg 6.5, arm 6.
+pd = player()
+shoot(pd, "arm_l", 6)       -- black
+shoot(pd, "body", 7.75)     -- body at half
+shoot(pd, "leg_r", 1.3)     -- leg at 80%
+pd:change_health(1)         -- a small perk heal (Gambler)
+T("a small heal goes to the most hurt part only", near(hp("body"), 8.75) and near(hp("leg_r"), 5.2),
+  hp("body") .. " " .. hp("leg_r"))
+T("not to the black one", Body.IsBlack("arm_l"))
+pd:change_health(7.75)      -- fills the body, the rest to the leg
+T("a bigger heal fills it, then the next", near(hp("body"), 15.5) and near(hp("leg_r"), 6.2),
+  hp("body") .. " " .. hp("leg_r"))
+T("the game's health still agrees", sum_ok(pd), pd._health .. " " .. Body.Sum())
+pd:change_health(5)         -- more than is missing
+T("what nothing needs is not given", near(hp("leg_r"), 6.5) and Body.IsBlack("arm_l") and sum_ok(pd))
+-- After a part went black every part was hit by the spread: the heal still
+-- goes to one part, and every part gets its turn.
+pd = player()
+shoot(pd, "leg_l", 10)      -- black, the rest spread
+local before = {}
+for _, p in ipairs(Body.PARTS) do before[p.id] = hp(p.id) end
+local lowest, lowest_frac
+for _, p in ipairs(Body.PARTS) do
+  local f = Body.Frac(p.id)
+  if f > 0 and f < 1 and (not lowest or f < lowest_frac) then lowest, lowest_frac = p.id, f end
+end
+pd:change_health(0.3)
+local moved = {}
+for _, p in ipairs(Body.PARTS) do if hp(p.id) > before[p.id] + 1e-9 then moved[#moved + 1] = p.id end end
+T("with a black leg a perk heal still shows on one part", #moved == 1 and moved[1] == lowest,
+  table.concat(moved, ",") .. " / " .. tostring(lowest))
+pd:change_health(40)
+local full = true
+for _, p in ipairs(Body.PARTS) do if p.id ~= "leg_l" and Body.Frac(p.id) < 0.999 then full = false end end
+T("enough healing fills every part but the black one", full and Body.IsBlack("leg_l"))
 
 -- Down, then a medic bag gets you up: full.
 pd = player()

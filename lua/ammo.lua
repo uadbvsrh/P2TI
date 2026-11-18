@@ -27,10 +27,12 @@ Ammo.LOOSE_ITEM = "loose_ammo"
 
 -- Containers whose contents are "to hand". A magazine here can be loaded, a
 -- magazine in the backpack is carried but not ready.
-Ammo.ACTIVE = { "rig", "rig_2", "rig_3", "pockets" }
+-- The ammo pouch (Fully Loaded) holds only loose rounds: it comes first, so
+-- loose rounds go there first and are taken from there first.
+Ammo.ACTIVE = { "pouch", "rig", "rig_2", "rig_3", "pockets" }
 
 -- Every container, for things that are stored but still usable (loose rounds).
-Ammo.STORAGE = { "rig", "rig_2", "rig_3", "pockets", "backpack" }
+Ammo.STORAGE = { "pouch", "rig", "rig_2", "rig_3", "pockets", "backpack" }
 
 -- Rounds in one loose stack (the item's max_stack, 100).
 local MAX_STACK = 100
@@ -44,10 +46,7 @@ Ammo.MAX_STACK = MAX_STACK
 Ammo.panel_dirty = false
 Ammo.panel_visible = false
 
-local function log(message)
-    local line = "[PDTI AMMO] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI AMMO")
 
 Ammo.log = log
 
@@ -56,8 +55,6 @@ Ammo.log = log
 -- The settings of the merged ISSR mod. The old save files are read so the
 -- values the player already chose survive the merge.
 Ammo.settings = {
-    max_extra_mags = 0,
-    ammo_max = 125,
     drop_mode = 1,
     hold_time = 0.2,
     overlay_always = false,
@@ -77,17 +74,31 @@ Ammo.settings = {
     akimbo_buttons = true,
     -- Health per body part (body.lua).
     body_parts = true,
+    -- Heavy armour: plates instead of regeneration once broken (armour.lua).
+    heavy_armour = true,
+    -- The size of the inventory screen (ui_beardlib.lua), from the next open.
+    ui_scale = 1,
+    -- Pictures of weapons and parts on the inventory screen (ui_pictures.lua).
+    item_pictures = true,
+    -- Names written over those pictures (in the grid, PRI / SEC).
+    item_picture_names = true,
+    -- The mouse wheel chooses the next magazine (and "gun": take it out).
+    wheel_choose = true,
+    -- Start in the safehouse, and go back there after every job (safehouse.lua).
+    safehouse_home = true,
     enabled = true
 }
 
 local SETTING_FILES = {
     { file = "issr_settings.txt", keys = {
-        "max_extra_mags", "ammo_max", "drop_mode", "hold_time", "overlay_always",
+        "drop_mode", "hold_time", "overlay_always",
         "show_mags", "show_loose", "show_ammo_type", "max_boxes", "show_more",
         "font_size", "pad_right", "pad_bottom", "enabled" } },
     { file = "issr_reload_settings.txt", keys = {
-        "round_interval", "sound", "unblock_bag", "akimbo_buttons", "body_parts" } }
+        "round_interval", "sound", "unblock_bag", "akimbo_buttons", "body_parts", "heavy_armour", "ui_scale", "wheel_choose",
+        "safehouse_home", "item_pictures", "item_picture_names" } }
 }
+Ammo.SETTING_FILES = SETTING_FILES
 
 local function load_settings()
     if not rawget(_G, "json") then return end
@@ -112,6 +123,25 @@ local function load_settings()
 end
 
 load_settings()
+Ammo.LoadSettings = load_settings
+
+-- Writes the settings back into the same two files (the options menu).
+function Ammo.SaveSettings()
+    if not rawget(_G, "json") then return false, "no json" end
+    local all = true
+    for _, entry in ipairs(SETTING_FILES) do
+        local data = {}
+        for _, key in ipairs(entry.keys) do data[key] = Ammo.settings[key] end
+        local ok = pcall(function()
+            local file = assert(io.open((rawget(_G, "SavePath") or "") .. entry.file, "w"))
+            file:write(json.encode(data))
+            file:close()
+        end)
+        if not ok then all = false end
+    end
+    if not all then log("could not save the settings") end
+    return all
+end
 
 ------------------------------------------------------------------- helpers
 
@@ -132,12 +162,14 @@ function Ammo.PlayerUnit()
     return managers and managers.player and managers.player:player_unit()
 end
 
+local function equipped_of(unit)
+    return unit:inventory():equipped_unit()
+end
+
 function Ammo.EquippedUnit()
     local unit = Ammo.PlayerUnit()
     if not unit then return nil end
-    local ok, equipped = pcall(function()
-        return unit:inventory():equipped_unit()
-    end)
+    local ok, equipped = pcall(equipped_of, unit)
     if not ok then return nil end
     return equipped
 end
@@ -282,7 +314,7 @@ Ammo.MagAmountFor = mag_amount_for
 function Ammo.MagAmount(info, name_id)
     if not info then return 0 end
     local amount
-    if info.typed then
+    if info.sized then
         -- The weapon's ammunition in base magazines, one of them in the gun.
         local tweak = name_id and tweak_data.weapon[name_id]
         local max = tweak and tonumber(tweak.AMMO_MAX)
@@ -295,10 +327,6 @@ function Ammo.MagAmount(info, name_id)
     return amount
 end
 
-function Ammo.ExtraMags()
-    return math.max(0, math.floor(Ammo.settings.max_extra_mags or 0))
-end
-
 -- Weapons that are loaded round by round take their ammunition straight from
 -- the loose rounds you carry and have no magazines: shotguns that load shell
 -- by shell, double-barrelled shotguns, bows, crossbows, grenade launchers and
@@ -306,6 +334,7 @@ end
 local LOOSE_CATEGORIES = { bow = true, crossbow = true, grenade_launcher = true }
 Ammo.LOOSE_CATEGORIES = LOOSE_CATEGORIES
 
+local SHOTGUN_ONLY = { shotgun = true }
 local function has_category(wep, wanted)
     local tweak = weapon_tweak(wep)
     for _, category in ipairs(tweak and tweak.categories or {}) do
@@ -322,7 +351,7 @@ function Ammo.FeedMode(wep)
     local size = clip_size(wep)
     -- A single-shot weapon has no magazine.
     if size and size <= 1 then return "loose" end
-    if has_category(wep, { shotgun = true }) and size and size <= 2 then return "loose" end
+    if has_category(wep, SHOTGUN_ONLY) and size and size <= 2 then return "loose" end
     return "magazine"
 end
 
@@ -338,8 +367,9 @@ end
 
 -- "primary" or "secondary": the loose rounds and the magazines of the two
 -- guns look different in the inventory.
+local function selection_of(wep) return wep:selection_index() end
 function Ammo.SlotOf(wep)
-    local ok, index = pcall(function() return wep:selection_index() end)
+    local ok, index = pcall(selection_of, wep)
     if ok and index == 2 then return "primary" end
     if ok and index == 1 then return "secondary" end
     return nil
@@ -349,14 +379,20 @@ end
 -- these categories the weapon has. Akimbo guns carry a magazine for each gun.
 Ammo.SIZE_CLASSES = { "grenade_launcher", "crossbow", "bow", "shotgun", "snp", "lmg", "minigun", "flamethrower", "smg", "revolver", "pistol", "assault_rifle" }
 
+local EMPTY = {}
 function Ammo.SizeClass(wep)
     local tweak = weapon_tweak(wep)
-    local has = {}
-    for _, category in ipairs(tweak and tweak.categories or {}) do has[category] = true end
-    for _, class in ipairs(Ammo.SIZE_CLASSES) do
-        if has[class] then return class, has.akimbo == true end
+    local categories = tweak and tweak.categories or EMPTY
+    local akimbo = false
+    for _, category in ipairs(categories) do
+        if category == "akimbo" then akimbo = true break end
     end
-    return nil, has.akimbo == true
+    for _, class in ipairs(Ammo.SIZE_CLASSES) do
+        for _, category in ipairs(categories) do
+            if category == class then return class, akimbo end
+        end
+    end
+    return nil, akimbo
 end
 
 -------------------------------------------------- sizes and bullets
@@ -373,20 +409,76 @@ Ammo.SIZE_ORDER = { "compact", "standard", "extended", "drum" }
 
 -- damage: multiplier; pierce: chance against armour plates (nil: the
 -- weapon's own); through: shoots through enemies and shields (nil: the
--- weapon's own); no_ap_skill: the AP-bullets skill does not apply;
--- limb_crit: every hit on an arm or a leg is a critical hit.
+-- weapon's own); limb_crit: every hit on an arm or a leg is a critical hit.
 Ammo.BULLETS = {
     standard = { name = "Standard", short = "STD", damage = 1.0 },
-    hollow = { name = "Hollow point", short = "HP", damage = 1.3, pierce = 0, through = false,
-        no_ap_skill = true, limb_crit = true },
+    -- Hollow points hit a little harder than standard rounds and make every
+    -- limb hit a critical; armour piercing hits hardest (it is the dearest).
+    hollow = { name = "Hollow point", short = "HP", damage = 1.1, pierce = 0, through = false,
+        limb_crit = true },
     -- Armour piercing is less stable: every shot kicks harder (recoil), and
     -- the kick builds up while you keep firing (recoil_build per shot in a
     -- row, up to recoil_build_max shots), so full auto climbs away and single
     -- aimed shots are the way to use it.
-    ap = { name = "Armour piercing", short = "AP", damage = 0.85, pierce = 1, through = true,
-        recoil = 1.5, recoil_build = 0.1, recoil_build_max = 6 }
+    ap = { name = "Armour piercing", short = "AP", damage = 1.3, pierce = 1, through = true,
+        recoil = 1.5, recoil_build = 0.1, recoil_build_max = 6, family = "rifle" },
+
+    -- Shotgun shells: the game's own ammunition types. Their effect is the
+    -- game's, exactly as if the ammo mod was on the gun (shells.lua takes it
+    -- from the game per shell), so nothing here changes damage or flags.
+    -- part: the game's ammo part; parts: also counts as this shell.
+    custom = { name = "000 Buckshot", short = "000", family = "shell",
+        part = "wpn_fps_upg_a_custom", parts = { "wpn_fps_upg_a_custom_free" } },
+    flechette = { name = "Flechette", short = "FL", family = "shell", part = "wpn_fps_upg_a_piercing" },
+    slug = { name = "AP Slug", short = "SLG", family = "shell", part = "wpn_fps_upg_a_slug" },
+    tombstone = { name = "Tombstone Slug", short = "TS", family = "shell", part = "wpn_fps_upg_a_rip" },
+    dragon = { name = "Dragon's Breath", short = "DB", family = "shell", part = "wpn_fps_upg_a_dragons_breath" },
+    he = { name = "HE Round", short = "HE", family = "shell", part = "wpn_fps_upg_a_explosive" },
+
+    -- LMG rounds.
+    -- explosive: a weak round that bursts on impact. The hit itself does
+    -- little, and a small blast (blast_range, in cm) does the same low damage
+    -- around the point of impact. It never goes through anything.
+    -- A concussion round against people, an anti-armour round against
+    -- bulldozers and turrets:
+    --   * the blast can be a critical hit (the player's crit chance, as a
+    --     bullet), and always is on a bulldozer or a turret (sure_crit);
+    --   * on a bulldozer or a turret it does heavy_mul times the damage
+    --     (before the crit): 0.35 x 4 x 2 = 2.8 standard rounds, and
+    --     restoration-mod's bulldozers take x2.5 from explosions on top;
+    --   * every other enemy who lives through it is dazed (stun_chance 1:
+    --     the concussion grenade's stun). Bulldozers are not.
+    explosive = { name = "HE round", short = "HE", family = "lmg", damage = 0.35, pierce = 0, through = false,
+        explosive = true, blast_range = 60, blast_crit = true, sure_crit = true, heavy_mul = 4,
+        stun_chance = 1, dozer_stun_chance = 0 },
+    -- penetrator: a heavy core that goes through armour, shields, enemies and
+    -- thin walls. Fired from the shoulder it kicks very hard, and the kick
+    -- climbs fast while you hold the trigger; on the bipod (bipod_recoil) it
+    -- is a little harder than a standard round and does not climb.
+    penetrator = { name = "Penetrator", short = "PEN", family = "lmg", damage = 1.5, pierce = 1, through = true,
+        wall = true, recoil = 4, recoil_build = 0.25, recoil_build_max = 8, bipod_recoil = 1.15 }
 }
+Ammo.BULLETS.hollow.family = "rifle"
+-- Rifle bullets (assault rifles, SMGs) and shotgun shells. "standard" is in
+-- both: a standard rifle round, or buckshot (the gun without an ammo mod).
 Ammo.BULLET_ORDER = { "standard", "hollow", "ap" }
+Ammo.SHELL_ORDER = { "standard", "custom", "flechette", "slug", "tombstone", "dragon", "he" }
+Ammo.LMG_ORDER = { "standard", "explosive", "penetrator" }
+Ammo.FAMILY_ORDER = { rifle = Ammo.BULLET_ORDER, shell = Ammo.SHELL_ORDER, lmg = Ammo.LMG_ORDER }
+-- The names "standard" has in each family.
+Ammo.STANDARD_NAMES = { rifle = { name = "Standard", short = "STD" }, shell = { name = "Buckshot", short = "BK" } }
+
+-- A gun without a magazine (taken out, or dropped and the reload stopped)
+-- reloads faster: the part of the reload that takes the old magazine out
+-- (the first 30%) is skipped, so the rest runs in the time it would take.
+Ammo.EMPTY_GUN_SPEED = 1 / 0.7
+
+function Ammo.GunWithoutMagazine(wep)
+    if not wep then return false end
+    if wep._issr_no_mag or wep._issr_mag_gone then return true end
+    local empty = wep._pdti_gun_empty
+    return empty ~= nil and empty[1] == true and empty[2] == true
+end
 
 -- What things cost. Adding something to the menu plan pays for it from your
 -- spending cash, and taking it out pays it back. What a heist uses up (rounds
@@ -395,11 +487,15 @@ Ammo.BULLET_ORDER = { "standard", "hollow", "ap" }
 -- rounds cost their rounds. Weapons without sizes and bullets count as
 -- standard. Items: PRICES.item, or a definition's own `price` (other mods).
 Ammo.PRICES = {
-    round = { standard = 30, hollow = 90, ap = 180 },
+    round = { standard = 30, hollow = 90, ap = 180,
+        custom = 60, flechette = 120, slug = 150, tombstone = 150, dragon = 200, he = 250,
+        explosive = 150, penetrator = 220 },
     magazine = { compact = 600, standard = 1000, extended = 2000, drum = 5000 },
     item = {
         first_aid_kit = 4000, doctor_bag = 12000, ammo_bag = 10000, bodybags_bag = 3000,
-        bandage = 500, painkillers = 800, grenade = 2500, ecm_battery = 5000, armor_kit = 6000
+        bandage = 500, painkillers = 800, grenade = 2500, ecm_battery = 5000, armor_kit = 6000,
+        trip_mine = 1500, ecm_jammer = 8000, spy_camera = 3000, sentry_gun = 15000,
+        sentry_gun_silent = 15000, grenade_crate = 10000, armor_bag = 6000
     },
     -- One throwable (grenade, molotov, knife ...) thrown. Abilities (the
     -- perk deck throwables with a cooldown) are free.
@@ -469,36 +565,188 @@ function Ammo.BulletId(id)
     return "standard"
 end
 
+-------------------------------------------------- bullet families
+
+-- "rifle" (assault rifles, SMGs), "shell" (shotguns) or nil (the other
+-- weapons, whose rounds have no kinds). info: from Identify or Plan.Info.
+function Ammo.Family(info)
+    return type(info) == "table" and info.family or nil
+end
+
+local function factory_tweak()
+    return tweak_data and tweak_data.weapon and tweak_data.weapon.factory or nil
+end
+
+-- Does the game have this shell's ammo part?
+function Ammo.ShellExists(id)
+    local def = Ammo.BULLETS[id]
+    if not def or def.family ~= "shell" then return id == "standard" end
+    local factory = factory_tweak()
+    local parts = factory and factory.parts
+    if type(parts) ~= "table" then return true end
+    if parts[def.part] then return true end
+    for _, p in ipairs(def.parts or {}) do if parts[p] then return true end end
+    return false
+end
+
+-- The shells a shotgun takes: the game's ammo parts its own part list has
+-- (the same rule as attaching the ammo mod in the menu). Without the game's
+-- weapon data (tests, an unknown gun): every shell the game has.
+local accepted_cache = {}
+function Ammo.ShellsAccepted(factory_id)
+    local key = tostring(factory_id)
+    if accepted_cache[key] then return accepted_cache[key] end
+    local factory = factory_tweak()
+    local weapon = factory_id and factory and factory[factory_id]
+    local uses = type(weapon) == "table" and type(weapon.uses) == "table" and weapon.uses or nil
+    local set = {}
+    if uses then for _, p in ipairs(uses) do set[p] = true end end
+    local out = {}
+    for _, id in ipairs(Ammo.SHELL_ORDER) do
+        local def = Ammo.BULLETS[id]
+        local ok = id == "standard"
+        if not ok and Ammo.ShellExists(id) then
+            if not uses then
+                ok = true
+            else
+                ok = set[def.part] == true
+                for _, p in ipairs(def.parts or {}) do ok = ok or set[p] == true end
+            end
+        end
+        if ok then out[#out + 1] = id end
+    end
+    if factory then accepted_cache[key] = out end
+    return out
+end
+
+function Ammo.ResetShellCache()
+    accepted_cache = {}
+end
+
+-- The bullets a weapon can use, in menu order. Weapons without kinds: none.
+function Ammo.BulletsFor(info)
+    local family = Ammo.Family(info)
+    if family == "shell" then return Ammo.ShellsAccepted(info.factory_id) end
+    if family == "rifle" then return Ammo.BULLET_ORDER end
+    if family == "lmg" then return Ammo.LMG_ORDER end
+    return {}
+end
+
+function Ammo.BulletAllowed(info, id)
+    for _, b in ipairs(Ammo.BulletsFor(info)) do
+        if b == id then return true end
+    end
+    return false
+end
+
+-- The bullet, or standard when the weapon cannot use it.
+function Ammo.SafeBullet(info, id)
+    id = Ammo.BulletId(id)
+    if Ammo.BulletAllowed(info, id) then return id end
+    return "standard"
+end
+
+-- A load without the rounds the weapon cannot use (a plan made for another
+-- gun): they become standard rounds.
+function Ammo.FilterLoad(info, load)
+    -- ParseLoad of the same list with the bullets made safe, in one pass.
+    local out = {}
+    for _, part in ipairs(load or {}) do
+        local b = Ammo.SafeBullet(info, part[1])
+        local n = math.floor(tonumber(part[2]) or 0)
+        if Ammo.BULLETS[b] and n > 0 then
+            local last = out[#out]
+            if last and last[1] == b then last[2] = last[2] + n
+            else out[#out + 1] = { b, n } end
+        end
+    end
+    return out
+end
+
+-- The name and the short tag of a bullet, as the weapon's family calls it
+-- (standard shells are buckshot).
+function Ammo.BulletName(id, family)
+    id = Ammo.BulletId(id)
+    if id == "standard" and family and Ammo.STANDARD_NAMES[family] then return Ammo.STANDARD_NAMES[family].name end
+    return Ammo.BULLETS[id].name
+end
+
+function Ammo.BulletShort(id, family)
+    id = Ammo.BulletId(id)
+    if id == "standard" and family and Ammo.STANDARD_NAMES[family] then return Ammo.STANDARD_NAMES[family].short end
+    return Ammo.BULLETS[id].short
+end
+
+-------------------------------------------------- ammunition categories
+
+-- The categories the screen groups ammunition by: assault rifles and SMGs
+-- (rifle bullets), shotguns (shells), LMGs (LMG rounds) and the
+-- other weapons.
+Ammo.CATEGORY_ORDER = { "rifle", "shell", "lmg", "other" }
+Ammo.CATEGORY_NAMES = { rifle = "AR/SMG", shell = "Shotgun", lmg = "LMG", other = "Other" }
+Ammo.CATEGORY_BULLETS = { rifle = Ammo.BULLET_ORDER, shell = Ammo.SHELL_ORDER, lmg = Ammo.LMG_ORDER, other = { "standard" } }
+
+-- The category of a weapon (info from Identify or Plan.Info).
+function Ammo.AmmoCategory(info)
+    if type(info) ~= "table" then return nil end
+    if info.family == "rifle" or info.family == "shell" or info.family == "lmg" then return info.family end
+    if info.mag_class == "lmg" then return "lmg" end
+    return "other"
+end
+
+-- The family of a supply's rounds, from the bullets they carry.
+function Ammo.FamilyOfBullet(id)
+    local def = Ammo.BULLETS[id]
+    return def and def.family or nil
+end
+
 -------------------------------------------------- mixed loads
 
 -- A magazine can hold several kinds of bullets: its load is a list of
 -- { bullet, n } from the top (fired first) to the bottom. In the save it is
 -- a string, "ap:10,hollow:20" (the save keeps only plain values).
+-- Neighbours of the same kind are one run: the run is added to the list.
+local function add_run(out, b, n)
+    local last = out[#out]
+    if last and last[1] == b then last[2] = last[2] + n
+    else out[#out + 1] = { b, n } end
+end
+
 function Ammo.ParseLoad(value)
     local out = {}
     if type(value) == "table" then
         for _, part in ipairs(value) do
             local b, n = part[1] or part.bullet, math.floor(tonumber(part[2] or part.n) or 0)
-            if Ammo.BULLETS[b] and n > 0 then out[#out + 1] = { b, n } end
+            if Ammo.BULLETS[b] and n > 0 then add_run(out, b, n) end
         end
     elseif type(value) == "string" then
         for b, n in value:gmatch("(%a+):(%d+)") do
             n = math.floor(tonumber(n) or 0)
-            if Ammo.BULLETS[b] and n > 0 then out[#out + 1] = { b, n } end
+            if Ammo.BULLETS[b] and n > 0 then add_run(out, b, n) end
         end
     end
-    -- Neighbours of the same kind are one run.
-    local merged = {}
-    for _, part in ipairs(out) do
-        local last = merged[#merged]
-        if last and last[1] == part[1] then last[2] = last[2] + part[2]
-        else merged[#merged + 1] = { part[1], part[2] } end
-    end
-    return merged
+    return out
 end
 
 function Ammo.LoadString(load)
     local parts = {}
+    if type(load) == "table" then
+        -- ParseLoad's runs without the copy: the open run is written when
+        -- the next kind starts.
+        local cur_b, cur_n = nil, 0
+        for _, part in ipairs(load) do
+            local b, n = part[1] or part.bullet, math.floor(tonumber(part[2] or part.n) or 0)
+            if Ammo.BULLETS[b] and n > 0 then
+                if cur_b == b then cur_n = cur_n + n
+                else
+                    if cur_b then parts[#parts + 1] = cur_b .. ":" .. cur_n end
+                    cur_b, cur_n = b, n
+                end
+            end
+        end
+        if cur_b then parts[#parts + 1] = cur_b .. ":" .. cur_n end
+        return table.concat(parts, ",")
+    end
     for _, part in ipairs(Ammo.ParseLoad(load)) do parts[#parts + 1] = part[1] .. ":" .. part[2] end
     return table.concat(parts, ",")
 end
@@ -549,6 +797,11 @@ function Ammo.FitLoad(load, rounds, fill)
     return load, popped
 end
 
+-- Does this magazine (item data) know the kinds of its rounds?
+function Ammo.HasLoad(data)
+    return type(data) == "table" and (data.size ~= nil or data.load ~= nil or data.bullet ~= nil)
+end
+
 -- The load of a magazine item's data.
 function Ammo.LoadOf(data)
     if type(data) ~= "table" then return {} end
@@ -558,10 +811,16 @@ function Ammo.LoadOf(data)
 end
 
 -- "30 AP", or "30 AP+" when there is more than one kind.
-function Ammo.LoadTag(load, fallback)
+-- family: "shell" calls standard rounds buckshot (found from the load when
+-- not given).
+function Ammo.LoadTag(load, fallback, family)
     local top = Ammo.LoadTop(load) or fallback
     if not top then return "" end
-    return Ammo.BULLETS[Ammo.BulletId(top)].short .. ((#(load or {}) > 1) and "+" or "")
+    if not family then
+        for _, part in ipairs(load or {}) do family = family or Ammo.FamilyOfBullet(part[1]) end
+        family = family or Ammo.FamilyOfBullet(fallback)
+    end
+    return Ammo.BulletShort(top, family) .. ((#(load or {}) > 1) and "+" or "")
 end
 
 -- Rounds in a magazine of this size, from the weapon's base magazine.
@@ -570,37 +829,62 @@ function Ammo.SpecCapacity(base, size)
     return math.max(1, math.floor((tonumber(base) or 30) * def.mul + 0.5))
 end
 
-function Ammo.SpecTag(size, bullet)
-    return Ammo.MAG_SIZES[Ammo.SizeId(size)].short .. "/" .. Ammo.BULLETS[Ammo.BulletId(bullet)].short
+-- "S/AP"; a magazine without a size (shotguns) only its bullet.
+function Ammo.SpecTag(size, bullet, family)
+    family = family or Ammo.FamilyOfBullet(bullet)
+    if not size then return Ammo.BulletShort(bullet, family) end
+    return Ammo.MAG_SIZES[Ammo.SizeId(size)].short .. "/" .. Ammo.BulletShort(bullet, family)
 end
 
 function Ammo.IsTypedClass(class)
     return class ~= nil and Ammo.TYPED_CLASSES[class] == true
 end
 
--- An assault rifle or SMG fed from magazines.
+-- An assault rifle or SMG fed from magazines (sizes and rifle bullets).
 function Ammo.Typed(wep)
     if not wep or Ammo.IsLooseFed(wep) then return false end
     return Ammo.IsTypedClass((Ammo.SizeClass(wep)))
 end
 
+-- What Identify adds for a shotgun: the rounds have kinds (typed), but the
+-- magazines keep their game sizes (not sized).
+local function add_shell(info, wep)
+    info.typed = true
+    info.family = "shell"
+    info.shell = true
+    info.factory_id = wep._factory_id
+    return info
+end
+
+-- What Identify adds for an LMG: the rounds have kinds (LMG rounds), the
+-- magazines (box, belt) keep their game sizes.
+local function add_lmg(info)
+    info.typed = true
+    info.family = "lmg"
+    return info
+end
+
 -- Everything the ammunition code needs to know about a weapon.
 function Ammo.Identify(wep)
-    if not wep then return nil end
+    -- (The armory's stand-in when you hold no weapon: not a gun of yours.)
+    if not wep or wep._pdti_unarmed then return nil end
     local caliber = weapon_label(wep)
     if not caliber then return nil end
     if Ammo.IsLooseFed(wep) then
         local name = wep._name_id
         if not name then return nil end
-        return {
+        local info = {
             key = tostring(caliber) .. "|" .. tostring(name) .. ":loose",
             pid = tostring(name),
             caliber = caliber,
             capacity = clip_size(wep) or 1,
             loose_fed = true,
             slot = Ammo.SlotOf(wep),
+            weapon = wep._name_id,
             mag_class = (Ammo.SizeClass(wep))
         }
+        if info.mag_class == "shotgun" then add_shell(info, wep) end
+        return info
     end
     local class, akimbo = Ammo.SizeClass(wep)
     if Ammo.IsTypedClass(class) and wep._name_id then
@@ -620,9 +904,12 @@ function Ammo.Identify(wep)
             caliber = caliber,
             capacity = math.max(1, math.floor(base)),
             slot = Ammo.SlotOf(wep),
+            weapon = wep._name_id,
             mag_class = class,
             akimbo = akimbo or nil,
-            typed = true
+            typed = true,
+            sized = true,
+            family = "rifle"
         }
     end
     local pid = mag_part_id(wep)
@@ -634,31 +921,63 @@ function Ammo.Identify(wep)
         local full = clip_size(wep) or capacity
         capacity = math.max(1, math.floor(full / 2))
     end
-    return {
+    local info = {
         key = tostring(caliber) .. "|" .. tostring(pid),
         pid = pid,
         caliber = caliber,
         capacity = capacity,
         slot = Ammo.SlotOf(wep),
+        weapon = wep._name_id,
         mag_class = class,
         akimbo = akimbo or nil
     }
+    if class == "shotgun" then add_shell(info, wep) end
+    if class == "lmg" then add_lmg(info) end
+    return info
 end
 
 -- The second gun of an akimbo pair: the game marks it with its parent
 -- weapon; else it is the _second_gun of the weapon in hand.
+local function second_gun_check(wep)
+    local main = Ammo.EquippedBase()
+    local second = main and main ~= wep and main._second_gun
+    return second ~= nil and second ~= false and alive(second) and second:base() == wep
+end
 function Ammo.IsSecondGun(wep)
     if wep.parent_weapon ~= nil or wep._parent_weapon ~= nil or wep.SKIP_AMMO then return true end
-    local ok, result = pcall(function()
-        local main = Ammo.EquippedBase()
-        local second = main and main ~= wep and main._second_gun
-        return second ~= nil and second ~= false and alive(second) and second:base() == wep
-    end)
+    local ok, result = pcall(second_gun_check, wep)
     return ok and result == true
 end
 
+-- Is the ammunition system running? Not when it is switched off, and not in
+-- the safehouse: there the weapons are the game's own, so the shooting
+-- range uses up nothing of what you bring.
+function Ammo.On()
+    return Ammo.settings.enabled == true and not PDTI.InSafehouse()
+end
+
+-- A weapon's short name for the inventory's cells ("AMCAR", "2xChima"):
+-- ammunition is labelled by its weapon, not by the slot.
+local tag_cache = {}
+function Ammo.WeaponTag(weapon_id)
+    if weapon_id == nil then return nil end
+    local key = tostring(weapon_id)
+    if tag_cache[key] then return tag_cache[key] end
+    local name = nil
+    pcall(function()
+        local t = tweak_data.weapon[weapon_id]
+        name = managers.localization:text(t.name_id)
+    end)
+    if type(name) ~= "string" or name == "" or name:find("ERROR") then name = key end
+    local rest = name:match("^[Aa]kimbo%s+(.+)$")
+    local word = (rest or name):match("^(%S+)") or key
+    local tag = rest and ("2x" .. word:sub(1, 5)) or word:sub(1, 7)
+    tag_cache[key] = tag
+    return tag
+end
+
 function Ammo.SkipReason(wep)
-    if not Ammo.settings.enabled then return "mod disabled" end
+    if not Ammo.On() then return Ammo.settings.enabled and "the safehouse" or "mod disabled" end
     if not Ammo.IsOurs(wep) then return "not the player's weapon" end
     if not wep._blueprint and not Ammo.IsLooseFed(wep) then return "no blueprint" end
     -- An akimbo weapon is managed through its main gun (it has _second_gun);
@@ -680,20 +999,25 @@ end
 
 -- The order reloads take magazines in.
 -- The weapon's own slot comes first: a magazine put there is the next one.
-local GRID_RANK = { gun_primary = 0, gun_secondary = 0, pockets = 1, rig = 2, rig_2 = 3, rig_3 = 4 }
+local GRID_RANK = { gun_primary = 0, gun_secondary = 0, pouch = 1, pockets = 1, rig = 2, rig_2 = 3, rig_3 = 4 }
 Ammo.GRID_RANK = GRID_RANK
 Ammo.GUN_SLOTS = { primary = "gun_primary", secondary = "gun_secondary" }
 local GUN_CONTAINER = { gun_primary = true, gun_secondary = true }
 Ammo.IsGunSlot = function(name) return GUN_CONTAINER[name] == true end
 
+-- The magazine items of one supply that are not in the gun.
+local function magazine_items(key)
+    return PDTI.FindItems(function(container, item)
+        return item.item_id == Ammo.MAGAZINE_ITEM
+            and type(item.data) == "table" and item.data.queue_key == key and not item.data.in_gun
+    end)
+end
+
 -- Magazine items of one supply that are to hand, in grid order. The
 -- magazine in the gun (in_gun, in the weapon's slot) is not one of them.
 function Ammo.Magazines(key)
     local out = {}
-    for _, entry in ipairs(PDTI.FindItems(function(container, item)
-        return item.item_id == Ammo.MAGAZINE_ITEM
-            and type(item.data) == "table" and item.data.queue_key == key and not item.data.in_gun
-    end)) do
+    for _, entry in ipairs(magazine_items(key)) do
         if is_active(entry.container) or GUN_CONTAINER[entry.container] then
             out[#out + 1] = {
                 container = entry.container,
@@ -704,15 +1028,20 @@ function Ammo.Magazines(key)
                 pid = entry.item.data.pid,
                 size = entry.item.data.size,
                 bullet = entry.item.data.bullet,
-                load = entry.item.data.size and Ammo.LoadOf(entry.item.data) or nil,
+                load = Ammo.HasLoad(entry.item.data) and Ammo.LoadOf(entry.item.data) or nil,
                 x = tonumber(entry.item.x) or 0,
                 y = tonumber(entry.item.y) or 0
             }
         end
     end
-    -- Grid order: the pockets first, then the rig, each read from the top
-    -- left. You choose the order of your reloads by where you put them.
+    -- The fullest first and the empty ones last (by how full they are, so a
+    -- full compact magazine comes before a half-full drum); equally full ones
+    -- (two full ones) in grid order: the pockets first, then the rig, each
+    -- read from the top left.
     table.sort(out, function(a, b)
+        local fa = a.capacity > 0 and a.rounds / a.capacity or 0
+        local fb = b.capacity > 0 and b.rounds / b.capacity or 0
+        if math.abs(fa - fb) > 1e-9 then return fa > fb end
         local ra, rb = GRID_RANK[a.container] or 9, GRID_RANK[b.container] or 9
         if ra ~= rb then return ra < rb end
         if a.y ~= b.y then return a.y < b.y end
@@ -726,10 +1055,7 @@ end
 -- the gun).
 function Ammo.AllMagazines(key)
     local out = {}
-    for _, entry in ipairs(PDTI.FindItems(function(container, item)
-        return item.item_id == Ammo.MAGAZINE_ITEM
-            and type(item.data) == "table" and item.data.queue_key == key and not item.data.in_gun
-    end)) do
+    for _, entry in ipairs(magazine_items(key)) do
         out[#out + 1] = {
             container = entry.container,
             instance_id = entry.item.instance_id,
@@ -737,7 +1063,7 @@ function Ammo.AllMagazines(key)
             capacity = math.max(0, math.floor(tonumber(entry.item.data.capacity) or 0)),
             size = entry.item.data.size,
             bullet = entry.item.data.bullet,
-            load = entry.item.data.size and Ammo.LoadOf(entry.item.data) or nil
+            load = Ammo.HasLoad(entry.item.data) and Ammo.LoadOf(entry.item.data) or nil
         }
     end
     return out
@@ -762,7 +1088,12 @@ function Ammo.LooseStacks(key, bullet)
             bullet = entry.item.data.bullet
         }
     end
-    table.sort(out, function(a, b) return a.instance_id < b.instance_id end)
+    -- The ammo pouch first (Fully Loaded): its rounds are used first.
+    table.sort(out, function(a, b)
+        local pa, pb = a.container == "pouch", b.container == "pouch"
+        if pa ~= pb then return pa end
+        return a.instance_id < b.instance_id
+    end)
     return out
 end
 
@@ -804,10 +1135,25 @@ function Ammo.LooseData(key, info, bullet)
         caliber = info and info.caliber or "",
         pid = info and info.pid or "",
         slot = info and info.slot or nil,
+        wtag = info and Ammo.WeaponTag(info.weapon) or nil,
         -- A round weighs by its weapon type.
         mag_class = info and info.mag_class or nil,
-        bullet = info and info.typed and Ammo.BulletId(bullet) or nil
+        bullet = info and info.typed and Ammo.SafeBullet(info, bullet) or nil,
+        family = info and info.family or nil
     }
+end
+
+-- Puts as many of `remaining` rounds as fit into a loose stack; returns the
+-- rounds still to place.
+local function top_up_stack(entry, remaining)
+    local room = MAX_STACK - entry.rounds
+    if room <= 0 then return remaining end
+    local take = math.min(room, remaining)
+    local ok = PDTI.EditItems({ set_amount = {
+        { container = entry.container, instance_id = entry.instance_id, amount = entry.rounds + take }
+    } })
+    if ok then return remaining - take end
+    return remaining
 end
 
 -- Adds rounds to the loose ammunition of a supply. The rounds are real
@@ -819,17 +1165,21 @@ function Ammo.AddLooseKey(key, rounds, info, bullet)
     local data = Ammo.LooseData(key, info, bullet)
 
     local remaining = rounds
+    -- The ammo pouch (Fully Loaded) is filled first: its stacks, then new
+    -- stacks in it.
+    for _, entry in ipairs(Ammo.LooseStacks(key, data.bullet)) do
+        if remaining <= 0 or entry.container ~= "pouch" then break end
+        remaining = top_up_stack(entry, remaining)
+    end
+    while remaining > 0 do
+        local take = math.min(MAX_STACK, remaining)
+        if not PDTI.AddItemAuto("pouch", Ammo.LOOSE_ITEM, take, data) then break end
+        remaining = remaining - take
+    end
     -- Top up a stack that is not full yet.
     for _, entry in ipairs(Ammo.LooseStacks(key, data.bullet)) do
         if remaining <= 0 then break end
-        local room = MAX_STACK - entry.rounds
-        if room > 0 then
-            local take = math.min(room, remaining)
-            local ok = PDTI.EditItems({ set_amount = {
-                { container = entry.container, instance_id = entry.instance_id, amount = entry.rounds + take }
-            } })
-            if ok then remaining = remaining - take end
-        end
+        remaining = top_up_stack(entry, remaining)
     end
 
     -- The rest goes into new stacks.
@@ -901,13 +1251,18 @@ local function magazine_data(key, rounds, info, spec)
     local capacity = info and info.capacity or 0
     local size, bullet, load = nil, nil, nil
     if info and info.typed then
-        size = Ammo.SizeId(spec and spec.size)
-        capacity = Ammo.SpecCapacity(info.capacity, size)
+        -- Assault rifles and SMGs: the magazine's size sets its capacity.
+        -- Shotguns keep the game's magazine.
+        if info.sized then
+            size = Ammo.SizeId(spec and spec.size)
+            capacity = Ammo.SpecCapacity(info.capacity, size)
+        end
         rounds = math.min(rounds or 0, capacity)
         -- The bullets it holds, top first; rounds without a known bullet
         -- are of the magazine's own kind.
-        local list = Ammo.FitLoad(Ammo.ParseLoad(spec and spec.load), rounds, spec and spec.bullet)
-        bullet = Ammo.LoadTop(list) or Ammo.BulletId(spec and spec.bullet)
+        local fill = Ammo.SafeBullet(info, spec and spec.bullet)
+        local list = Ammo.FitLoad(Ammo.FilterLoad(info, Ammo.ParseLoad(spec and spec.load)), rounds, fill)
+        bullet = Ammo.LoadTop(list) or fill
         if rounds > 0 then load = Ammo.LoadString(list) end
     end
     return {
@@ -920,9 +1275,11 @@ local function magazine_data(key, rounds, info, spec)
         caliber = info and info.caliber or "",
         pid = info and info.pid or "",
         slot = info and info.slot or nil,
+        wtag = info and Ammo.WeaponTag(info.weapon) or nil,
         -- The size of the magazine follows its weapon type and capacity.
         mag_class = info and info.mag_class or nil,
-        akimbo = info and info.akimbo or nil
+        akimbo = info and info.akimbo or nil,
+        family = info and info.family or nil
     }
 end
 
@@ -951,23 +1308,208 @@ function Ammo.HasMagazineRoom(capacity, class, akimbo)
     return false
 end
 
-function Ammo.AddMagazine(wep, rounds, spec)
-    local info = Ammo.Identify(wep)
-    if not info then return false, "weapon not managed" end
-    return Ammo.AddMagazineKey(info.key, rounds, info, nil, spec)
-end
-
--- The magazine a reload would load: the fullest one in the rig or pockets.
--- An empty magazine is only loaded when the gun has no magazine at all.
+-- The magazine a reload would load: the one chosen with the mouse wheel, or
+-- else the first in the rig or pockets (grid order) that has rounds. An
+-- empty magazine is only loaded when the gun has no magazine at all.
 function Ammo.NextMagazine(wep)
     local info = Ammo.Identify(wep)
     if not info or info.loose_fed then return nil end
     local list = Ammo.Magazines(info.key)
     local any = wep._issr_mag_gone or wep._issr_no_mag
+    local chosen = Ammo.selection[info.key]
+    if chosen and chosen ~= "gun" then
+        for _, entry in ipairs(list) do
+            if entry.instance_id == chosen and (entry.rounds > 0 or any) then return entry end
+        end
+    end
     for _, entry in ipairs(list) do
         if entry.rounds > 0 or any then return entry end
     end
     return nil
+end
+
+------------------------------------------------- choosing the next magazine
+
+-- The mouse wheel chooses what the next reload does, per supply: a magazine
+-- you carry (its instance id) or "gun": the magazine in the gun comes out
+-- and the gun is left without one. nil: the first magazine with rounds.
+Ammo.selection = Ammo.selection or {}
+
+-- Does the gun have a magazine in it (either gun, for akimbo)?
+function Ammo.GunLoaded(wep)
+    if wep._issr_no_mag or wep._issr_mag_gone then return false end
+    local info = Ammo.Identify(wep)
+    if not info then return false end
+    for g = 1, (info.akimbo and 2 or 1) do
+        if Ammo.GunHasMagazine(wep, g) then return true end
+    end
+    return false
+end
+
+-- What the wheel goes through: the magazine in the gun ("gun") first, then
+-- the magazines to hand that a reload could load, in grid order.
+function Ammo.ChoiceList(wep)
+    local info = Ammo.Identify(wep)
+    if not info or info.loose_fed or Ammo.NoReload(wep) then return {} end
+    local out = {}
+    local loaded = Ammo.GunLoaded(wep)
+    if loaded then out[#out + 1] = "gun" end
+    for _, entry in ipairs(Ammo.Magazines(info.key)) do
+        if entry.rounds > 0 or not loaded then out[#out + 1] = entry.instance_id end
+    end
+    return out
+end
+
+-- What the next reload does: "gun" (take the magazine out), the instance id
+-- of the magazine it loads, or nil (nothing to load).
+function Ammo.CurrentChoice(wep)
+    local info = Ammo.Identify(wep)
+    if not info then return nil end
+    if Ammo.selection[info.key] == "gun" then
+        if Ammo.GunLoaded(wep) then return "gun" end
+        Ammo.selection[info.key] = nil
+    end
+    local entry = Ammo.NextMagazine(wep)
+    return entry and entry.instance_id or nil
+end
+
+-- The wheel: dir 1 is the next choice, -1 the one before (it goes round).
+function Ammo.CycleChoice(wep, dir)
+    local info = Ammo.Identify(wep)
+    if not info then return nil end
+    local list = Ammo.ChoiceList(wep)
+    if #list == 0 then return nil end
+    local now = Ammo.CurrentChoice(wep)
+    local at = nil
+    for i, id in ipairs(list) do if id == now then at = i end end
+    -- Nothing chosen and nothing to load: the wheel starts at the first.
+    if not at then at = dir > 0 and 0 or #list + 1 end
+    local i = ((at - 1 + (dir > 0 and 1 or -1)) % #list) + 1
+    Ammo.selection[info.key] = list[i]
+    Ammo.MarkPanelDirty()
+    return list[i]
+end
+
+-------------------------------------------- the next shell (shotgun tubes)
+
+-- A shotgun loaded shell by shell has no magazines: the wheel chooses which
+-- kind of shell the reload loads next (Ammo.selection[key] is its id). The
+-- kinds offered are the ones you carry loose rounds of.
+function Ammo.ShellChoices(wep)
+    local info = wep and Ammo.Identify(wep)
+    if not info or not info.loose_fed or info.family ~= "shell" then return {} end
+    local out = {}
+    for _, id in ipairs(Ammo.BulletsFor(info)) do
+        if Ammo.LooseOfKey(info.key, id) > 0 then out[#out + 1] = id end
+    end
+    return out
+end
+
+-- The shell the next reload loads: the chosen one while you carry it, else
+-- the first kind you carry (menu order). nil: no shells left.
+function Ammo.NextShell(wep)
+    local info = wep and Ammo.Identify(wep)
+    if not info then return nil end
+    local list = Ammo.ShellChoices(wep)
+    local chosen = Ammo.selection[info.key]
+    for _, id in ipairs(list) do
+        if id == chosen then return id end
+    end
+    return list[1]
+end
+
+-- The wheel on a shotgun tube: the next kind of shell (it goes round).
+function Ammo.CycleShell(wep, dir)
+    local info = wep and Ammo.Identify(wep)
+    if not info then return nil end
+    local list = Ammo.ShellChoices(wep)
+    if #list == 0 then return nil end
+    local now = Ammo.NextShell(wep)
+    local at = 1
+    for i, id in ipairs(list) do if id == now then at = i end end
+    local i = ((at - 1 + (dir > 0 and 1 or -1)) % #list) + 1
+    Ammo.selection[info.key] = list[i]
+    Ammo.MarkPanelDirty()
+    return list[i]
+end
+
+-- Loads shells into a tube: the clip grows by up to n, taken from the loose
+-- shells of the chosen kind (then the other kinds). Each goes on top.
+-- Returns the shells loaded and the kinds used ({ { id, n }, ... }).
+function Ammo.LoadShells(wep, before, n)
+    local info = wep and Ammo.Identify(wep)
+    if not info then return 0, {} end
+    local clip, used = before, {}
+    while n > 0 do
+        local id = Ammo.NextShell(wep)
+        if not id then break end
+        local got = Ammo.ConsumeLooseKey(info.key, n, id)
+        if got <= 0 then break end
+        clip = clip + got
+        n = n - got
+        wep:set_ammo_remaining_in_clip(clip)
+        Ammo.PushLoaded(wep, id, got)
+        used[#used + 1] = { id, got }
+    end
+    wep:set_ammo_remaining_in_clip(clip)
+    return clip - before, used
+end
+
+-- Taking the magazine out of the gun ("gun" chosen): is there a place for
+-- it (or both, akimbo) in the rig, the pockets or the backpack? Without a
+-- place: nil and why ("none": no magazine item in the gun; "room").
+function Ammo.UnloadPlaces(wep)
+    local info = Ammo.Identify(wep)
+    local c = info and Ammo.GUN_SLOTS[info.slot]
+    if not c then return nil end
+    local items = wep._pdti_gun_items or {}
+    local places, taken = {}, {}
+    for g = 1, (info.akimbo and 2 or 1) do
+        local id = items[g]
+        local item = id and Ammo.GunHasMagazine(wep, g) and PDTI.FindItem(c, id)
+        if item then
+            local ref = { item_id = item.item_id, data = item.data }
+            local found = nil
+            for _, name in ipairs(Ammo.STORAGE) do
+                local x, y, rotated = PDTI.FindFreeSpace(name, ref, true)
+                -- Two magazines must not be given the same place.
+                if x and not taken[name .. ":" .. x .. ":" .. y] then
+                    found = { container = name, x = x, y = y, rotated = rotated }
+                    taken[name .. ":" .. x .. ":" .. y] = true
+                    break
+                end
+            end
+            if not found then return nil, "room" end
+            places[#places + 1] = { from = c, id = id, g = g, to = found }
+        end
+    end
+    if #places == 0 then return nil, "none" end
+    return places
+end
+
+-- The magazine comes out of the gun into the inventory, as if it was
+-- dragged out of the weapon's slot. Returns true when it did.
+function Ammo.Unload(wep)
+    local places = Ammo.UnloadPlaces(wep)
+    if not places then return false end
+    local moved = false
+    for _, p in ipairs(places) do
+        local ok = PDTI.MoveItem(p.from, p.id, p.to.container, p.to.x, p.to.y, p.to.rotated)
+        if not ok then
+            -- The place taken by the first magazine: any other one.
+            local x, y, rotated = PDTI.FindFreeSpace(p.to.container,
+                { item_id = Ammo.MAGAZINE_ITEM, data = (PDTI.FindItem(p.from, p.id) or {}).data }, true)
+            if x then ok = PDTI.MoveItem(p.from, p.id, p.to.container, x, y, rotated) end
+        end
+        moved = moved or ok
+    end
+    -- The weapon's slot sees its magazine gone: the gun has none now.
+    Ammo.SyncGunSlot(wep)
+    local info = Ammo.Identify(wep)
+    if info then Ammo.selection[info.key] = nil end
+    Ammo.SyncTotal(wep)
+    Ammo.MarkPanelDirty()
+    return moved
 end
 
 -- Takes the fullest magazine of a supply out of the inventory: this is what a
@@ -979,6 +1521,8 @@ function Ammo.TakeMagazine(wep)
     if not entry then return nil end
     local ok = PDTI.RemoveItem(entry.container, entry.instance_id, 1)
     if not ok then return nil end
+    -- The chosen magazine is in the gun now: the next choice starts again.
+    if Ammo.selection[info.key] == entry.instance_id then Ammo.selection[info.key] = nil end
     return {
         rounds = entry.rounds, capacity = entry.capacity,
         caliber = entry.caliber, pid = entry.pid,
@@ -1062,7 +1606,10 @@ end
 
 ------------------------------------------------------------------ the total
 
-function Ammo.MaxTotal(wep)
+-- The weapon's normal ammunition: the magazine in the gun, the chamber and
+-- the game's number of magazines, or what you chose to bring if that is more.
+-- Ammo bags give a share of this.
+function Ammo.BaseTotal(wep)
     local info = Ammo.Identify(wep)
     if not info then return nil end
     local amount = Ammo.MagAmount(info, wep._name_id)
@@ -1076,12 +1623,22 @@ function Ammo.MaxTotal(wep)
             in_gun = Ammo.LoadedSpec(wep).capacity
         end
     end
-    local base = in_gun + Ammo.ChamberOf(wep) + amount * info.capacity
-    local max = math.floor(base * math.max(1, (Ammo.settings.ammo_max or 125) / 100))
+    local max = in_gun + Ammo.ChamberOf(wep) + amount * info.capacity
     -- What you chose to bring always fits.
     local planned = Ammo.plan_max and Ammo.plan_max[info.key]
     if planned and planned > max then max = planned end
     return max
+end
+
+-- The game's ammunition maximum. What you carry is limited by the room in
+-- your inventory, not by a number: the maximum is the normal ammunition, or
+-- what you carry when that is more.
+function Ammo.MaxTotal(wep)
+    local base = Ammo.BaseTotal(wep)
+    if not base then return nil end
+    local ok, total = pcall(wep.get_ammo_total, wep)
+    if ok and type(total) == "number" and total > base then return total end
+    return base
 end
 
 -- The weapon's ammunition is the magazine in the gun, the loose rounds you
@@ -1117,34 +1674,30 @@ end
 
 ------------------------------------------------------------------- packing
 
--- How many spare magazines this weapon may have.
+-- How many spare magazines an ammo bag fills you up to: the weapon's normal
+-- number (one more when the gun has no magazine). A bag refills you, it does
+-- not fill your backpack with magazines.
 function Ammo.MaxMagCount(wep)
     local info = Ammo.Identify(wep)
     if not info then return 0 end
-    local count = Ammo.MagAmount(info, wep._name_id) + Ammo.ExtraMags()
+    local count = Ammo.MagAmount(info, wep._name_id)
     if wep._issr_mag_gone then count = count + (info.akimbo and 2 or 1) end
     return count
-end
-
--- How many rounds the magazine in the gun still takes.
-function Ammo.InstalledRoom(wep, capacity)
-    if wep._issr_no_mag or wep._issr_mag_gone then return 0 end
-    local rounds = math.max(0, wep:get_ammo_remaining_in_clip() - Ammo.ChamberOf(wep))
-    if Ammo.IsAkimbo(wep) then capacity = 2 * capacity end
-    return math.max(0, capacity - rounds)
 end
 
 ---------------------------------------------------- the loaded magazine
 
 -- A magazine's spec: { size, bullet, capacity, load }. The load is kept as
 -- it was when the magazine went in; shots take rounds off its top.
-local function norm_spec(spec, base)
+-- unsized (shotguns): no size, the capacity is the base.
+local function norm_spec(spec, base, unsized)
     spec = type(spec) == "table" and spec or {}
-    local size = Ammo.SizeId(spec.size)
+    local size = not unsized and Ammo.SizeId(spec.size) or nil
     local load = spec.load and Ammo.ParseLoad(spec.load) or nil
     return {
         size = size, bullet = Ammo.BulletId(spec.bullet or Ammo.LoadTop(load)),
-        capacity = Ammo.SpecCapacity(base, size), load = load
+        capacity = unsized and math.max(1, math.floor(tonumber(base) or 1)) or Ammo.SpecCapacity(base, size),
+        load = load
     }
 end
 Ammo.NormSpec = norm_spec
@@ -1159,8 +1712,11 @@ local function spec_view(spec, rounds)
     }
 end
 
-local function gun_rounds(wep)
+-- The rounds of the magazine in the gun. A gun loaded round by round
+-- (a tube) has no magazine: all its rounds count.
+local function gun_rounds(wep, info)
     local ok, clip = pcall(wep.get_ammo_remaining_in_clip, wep)
+    if info and info.loose_fed then return math.max(0, ok and tonumber(clip) or 0) end
     return math.max(0, (ok and tonumber(clip) or 0) - Ammo.ChamberOf(wep))
 end
 
@@ -1172,7 +1728,8 @@ function Ammo.PairSpecs(wep)
     if type(specs) ~= "table" or not specs[1] or not specs[1].capacity then
         local one = type(specs) == "table" and specs[1] or wep._pdti_loaded
         local two = type(specs) == "table" and specs[2] or wep._pdti_loaded
-        specs = { norm_spec(one, base), norm_spec(two, base) }
+        local unsized = info and not info.sized
+        specs = { norm_spec(one, base, unsized), norm_spec(two, base, unsized) }
         wep._pdti_pair_specs = specs
     end
     return specs
@@ -1188,7 +1745,7 @@ end
 local function stored_spec(wep, info)
     local spec = wep._pdti_loaded
     if type(spec) ~= "table" or not spec.capacity then
-        spec = norm_spec(spec, info.capacity)
+        spec = norm_spec(spec, info.capacity, not info.sized)
         wep._pdti_loaded = spec
     end
     return spec
@@ -1206,7 +1763,7 @@ function Ammo.LoadedSpec(wep)
         if (tonumber(pair[2]) or 0) > (tonumber(pair[1]) or 0) then return views[2] end
         return views[1]
     end
-    return spec_view(stored_spec(wep, info), gun_rounds(wep))
+    return spec_view(stored_spec(wep, info), gun_rounds(wep, info))
 end
 
 -- Puts a magazine into the gun: spec = { size, bullet, load } (a magazine
@@ -1216,10 +1773,11 @@ function Ammo.SetLoaded(wep, spec, spec2)
     local info = Ammo.Identify(wep)
     if not info or not info.typed then return end
     wep._pdti_shot_bullet = nil
+    local unsized = not info.sized
     if info.akimbo then
-        wep._pdti_pair_specs = { norm_spec(spec, info.capacity), norm_spec(spec2 or spec, info.capacity) }
+        wep._pdti_pair_specs = { norm_spec(spec, info.capacity, unsized), norm_spec(spec2 or spec, info.capacity, unsized) }
     end
-    wep._pdti_loaded = norm_spec(spec, info.capacity)
+    wep._pdti_loaded = norm_spec(spec, info.capacity, unsized)
 end
 
 -- The bullet of the next shot.
@@ -1247,7 +1805,7 @@ function Ammo.ShotBullet(wep)
         end
     else
         local spec = stored_spec(wep, info)
-        local rounds = gun_rounds(wep)
+        local rounds = gun_rounds(wep, info)
         spec.load = spec.load or Ammo.FitLoad({}, rounds, spec.bullet)
         local _, popped = Ammo.FitLoad(spec.load, rounds, spec.bullet)
         fired = popped
@@ -1257,6 +1815,23 @@ function Ammo.ShotBullet(wep)
     return fired
 end
 
+-- A gun loaded round by round (a shotgun's tube): rounds of a bullet went
+-- in. They go on top, so the last shell loaded is fired first. Call after
+-- the clip grew by n.
+function Ammo.PushLoaded(wep, bullet, n)
+    local info = wep and Ammo.Identify(wep)
+    if not info or not info.typed or not n or n <= 0 then return end
+    local spec = stored_spec(wep, info)
+    local rounds = gun_rounds(wep, info)
+    local load = spec.load or Ammo.FitLoad({}, math.max(0, rounds - n), spec.bullet)
+    -- The load as it was before these rounds went in.
+    Ammo.FitLoad(load, math.max(0, rounds - n), spec.bullet)
+    Ammo.LoadPush(load, Ammo.SafeBullet(info, bullet), n)
+    spec.load = load
+    spec.bullet = Ammo.LoadTop(load) or spec.bullet
+    wep._pdti_shot_bullet = nil
+end
+
 -- The bullet of the shot that is being worked out (armour, critical hits).
 function Ammo.FiredBullet(wep)
     return wep and (wep._pdti_shot_bullet or Ammo.CurrentBullet(wep)) or nil
@@ -1264,6 +1839,54 @@ end
 
 -- The bullet's effect on the weapon's own flags. The weapon's values are
 -- kept once and come back with standard bullets.
+-- The game's explosive bullet (InstantExplosiveBulletBase, the one HE shells
+-- and the explosive-bullets skill use) with a smaller blast: range in cm.
+-- nil before the game has the class (or in tests without it).
+Ammo.explosive_classes = Ammo.explosive_classes or {}
+
+-- The blast of an explosive round, in cm; a skill can widen it
+-- (Ammo.blast_mul, a function returning a multiplier).
+function Ammo.BlastRange(def)
+    local range = tonumber(def and def.blast_range) or 60
+    local f = Ammo.blast_mul
+    if type(f) == "function" then
+        local ok, m = pcall(f)
+        if ok and type(m) == "number" and m > 0 then range = range * m end
+    end
+    return math.floor(range + 0.5)
+end
+function Ammo.ExplosiveClass(range)
+    range = tonumber(range) or 60
+    local cached = Ammo.explosive_classes[range]
+    if cached then return cached end
+    local base = rawget(_G, "InstantExplosiveBulletBase")
+    local make = rawget(_G, "class")
+    if type(base) ~= "table" or type(make) ~= "function" then return nil end
+    local ok, cls = pcall(make, base)
+    if not ok or type(cls) ~= "table" then return nil end
+    cls.RANGE = range
+    local params = {}
+    for k, v in pairs(base.EFFECT_PARAMS or {}) do params[k] = v end
+    params.feedback_range = range
+    params.camera_shake_max_mul = 0.5
+    cls.EFFECT_PARAMS = params
+    -- The blast of this round: while the game works out its damage,
+    -- Ammo.he_blast names the weapon, so the damage hooks know the blast is
+    -- an HE round's (critical hits, ammo_hooks.lua).
+    cls.on_collision_server = function(self, position, normal, damage, user_unit, weapon_unit, ...)
+        local fn = base.on_collision_server
+        if type(fn) ~= "function" then return nil end
+        local before = Ammo.he_blast
+        Ammo.he_blast = { weapon = weapon_unit, user = user_unit }
+        local result = { pcall(fn, self, position, normal, damage, user_unit, weapon_unit, ...) }
+        Ammo.he_blast = before
+        if not result[1] then error(result[2], 0) end
+        return unpack(result, 2, table.maxn(result))
+    end
+    Ammo.explosive_classes[range] = cls
+    return cls
+end
+
 function Ammo.ApplyBullet(wep, bullet)
     if not wep then return end
     local orig = wep._pdti_orig_flags
@@ -1271,11 +1894,35 @@ function Ammo.ApplyBullet(wep, bullet)
         orig = {
             enemy = wep._can_shoot_through_enemy,
             shield = wep._can_shoot_through_shield,
-            ap = wep._use_armor_piercing
+            ap = wep._use_armor_piercing,
+            wall = wep._can_shoot_through_wall,
+            class = wep._bullet_class,
+            slotmask = wep._bullet_slotmask,
+            blank = wep._blank_slotmask
         }
         wep._pdti_orig_flags = orig
     end
     local def = Ammo.BULLETS[Ammo.BulletId(bullet)]
+    if def.wall ~= nil then
+        wep._can_shoot_through_wall = def.wall
+    else
+        wep._can_shoot_through_wall = orig.wall
+    end
+    -- Explosive rounds: the game's explosive bullet with this round's blast.
+    local cls = def.explosive and Ammo.ExplosiveClass(Ammo.BlastRange(def)) or nil
+    if cls then
+        if wep._bullet_class ~= cls then
+            wep._bullet_class = cls
+            local ok, mask = pcall(cls.bullet_slotmask, cls)
+            if ok and mask then wep._bullet_slotmask = mask end
+            local ok2, blank = pcall(cls.blank_slotmask, cls)
+            if ok2 and blank then wep._blank_slotmask = blank end
+        end
+    elseif wep._bullet_class ~= orig.class then
+        wep._bullet_class = orig.class
+        wep._bullet_slotmask = orig.slotmask
+        wep._blank_slotmask = orig.blank
+    end
     if def.through == nil then
         wep._can_shoot_through_enemy = orig.enemy
         wep._can_shoot_through_shield = orig.shield
@@ -1283,11 +1930,7 @@ function Ammo.ApplyBullet(wep, bullet)
         wep._can_shoot_through_enemy = def.through
         wep._can_shoot_through_shield = def.through
     end
-    if def.no_ap_skill then
-        wep._use_armor_piercing = false
-    else
-        wep._use_armor_piercing = orig.ap
-    end
+    wep._use_armor_piercing = orig.ap
     wep._pdti_bullet = Ammo.BulletId(bullet)
 end
 
@@ -1296,21 +1939,29 @@ end
 function Ammo.ApplyLoaded(wep)
     local info = wep and Ammo.Identify(wep)
     if not info or not info.typed then return end
-    local max
-    if info.akimbo then
-        local specs = Ammo.PairSpecs(wep)
-        max = specs[1].capacity + specs[2].capacity
-    else
-        max = stored_spec(wep, info).capacity
+    if info.family == "shell" then
+        -- Shotguns keep the game's magazine; the next shell sets the gun.
+        if PDTI.Shells then PDTI.Shells.Apply(wep, Ammo.CurrentBullet(wep)) end
+        return
     end
-    if wep.set_ammo_max_per_clip then pcall(wep.set_ammo_max_per_clip, wep, max) end
+    -- LMGs keep the game's magazine; only AR/SMG magazines have sizes.
+    if info.sized then
+        local max
+        if info.akimbo then
+            local specs = Ammo.PairSpecs(wep)
+            max = specs[1].capacity + specs[2].capacity
+        else
+            max = stored_spec(wep, info).capacity
+        end
+        if wep.set_ammo_max_per_clip then pcall(wep.set_ammo_max_per_clip, wep, max) end
+    end
     Ammo.ApplyBullet(wep, Ammo.CurrentBullet(wep))
 end
 
 -- The reload speed of the magazine a reload loads: bigger is slower.
 function Ammo.SizeReloadFactor(wep)
     local info = wep and Ammo.Identify(wep)
-    if not info or not info.typed then return 1 end
+    if not info or not info.sized then return 1 end
     local entry = Ammo.NextMagazine(wep)
     if not entry then return 1 end
     return 1 / Ammo.MAG_SIZES[Ammo.SizeId(entry.size)].reload
@@ -1346,7 +1997,8 @@ local function gun_mag_data(wep, info, g)
         if info.typed then spec = Ammo.PairViews(wep)[g] end
     else
         rounds = gun_rounds(wep)
-        if info.typed then spec = Ammo.LoadedSpec(wep) end
+        -- Ammo.LoadedSpec(wep) for this info (no second Identify each frame).
+        if info.typed then spec = spec_view(stored_spec(wep, info), gun_rounds(wep, info)) end
     end
     local data = magazine_data(info.key, rounds, info, spec)
     if not info.typed then data.rounds = math.min(data.rounds, info.capacity) end
@@ -1412,7 +2064,7 @@ end
 -- A magazine was put into the empty slot of gun g: it goes into the gun.
 local function put_in(wep, info, g, item, container)
     local data = item.data
-    local cap = info.typed and Ammo.SpecCapacity(info.capacity, data.size) or info.capacity
+    local cap = info.sized and Ammo.SpecCapacity(info.capacity, data.size) or info.capacity
     local rounds = math.max(0, math.min(math.floor(tonumber(data.rounds) or 0), cap))
     local spec = info.typed and { size = data.size, bullet = data.bullet, load = Ammo.LoadOf(data) } or nil
     local chamber = Ammo.ChamberOf(wep)
@@ -1454,16 +2106,151 @@ local function put_in(wep, info, g, item, container)
     Ammo.MarkPanelDirty()
 end
 
+-- The magazines left in a weapon's slot by a gun no longer in your hands
+-- (put away, swapped for a picked-up one, left in custody) went with that
+-- gun: they come out of the slot. keep: the item ids of the gun in hand.
+-- (The plan's magazine for the slot is never marked in the gun.)
+function Ammo.DropGunLeftovers(c, keep)
+    local mine, n = {}, 0
+    for _, id in pairs(keep or {}) do mine[id] = true end
+    for _, it in ipairs((PDTI.GetContainerInfo(c) or { items = {} }).items) do
+        local d = it.data
+        if it.item_id == Ammo.MAGAZINE_ITEM and type(d) == "table" and d.in_gun == true
+            and not mine[it.instance_id] then
+            if PDTI.RemoveItem(c, it.instance_id) then n = n + 1 end
+        end
+    end
+    return n
+end
+
+-- The magazine loaded in a weapon goes with the weapon (into the backpack,
+-- and back into a slot). A weapon item keeps it in flat fields: gun_n
+-- magazines (two for akimbo guns), gun1_rounds / _size / _bullet / _load
+-- (and gun2_), their weight gun_weight; gun_set once the weapon's magazine
+-- was settled (a weapon you emptied stays empty). In a heist also
+-- gun_chamber, gun_clip for a weapon loaded round by round, and gun_in
+-- while all of it is in the gun in your hands.
+
+local function nonempty(v)
+    if v == nil or v == "" then return nil end
+    return v
+end
+
+-- The magazines a weapon item holds: { rounds, size, bullet, load } each.
+function Ammo.StoredMagazines(d)
+    local out = {}
+    if type(d) ~= "table" then return out end
+    for g = 1, math.min(2, math.floor(tonumber(d.gun_n) or 0)) do
+        local p = "gun" .. g .. "_"
+        out[#out + 1] = { rounds = math.max(0, math.floor(tonumber(d[p .. "rounds"]) or 0)),
+            size = nonempty(d[p .. "size"]), bullet = nonempty(d[p .. "bullet"]), load = nonempty(d[p .. "load"]) }
+    end
+    return out
+end
+
+-- The weapon item's fields for these magazines (magazine item data).
+function Ammo.GunFields(list)
+    local f = { gun_set = 1, gun_n = #list, gun_weight = 0, gun_in = 0 }
+    for g, m in ipairs(list) do
+        local p = "gun" .. g .. "_"
+        f[p .. "rounds"] = math.max(0, math.floor(tonumber(m.rounds) or 0))
+        f[p .. "size"] = m.size or ""
+        f[p .. "bullet"] = m.bullet or ""
+        f[p .. "load"] = m.load or ""
+        f.gun_weight = f.gun_weight + PDTI.ItemWeight({ item_id = Ammo.MAGAZINE_ITEM, amount = 1, data = m })
+    end
+    return f
+end
+
+-- In a heist: what is in the gun now, as a weapon item keeps it. Nil for a
+-- weapon the ammunition system leaves alone.
+function Ammo.GunState(wep)
+    local info = wep and Ammo.Identify(wep)
+    if not info or Ammo.SkipWeapon(wep) or Ammo.NoReload(wep) then return nil end
+    local ok, clip = pcall(wep.get_ammo_remaining_in_clip, wep)
+    clip = math.max(0, math.floor(ok and tonumber(clip) or 0))
+    if info.loose_fed then
+        local f = Ammo.GunFields({})
+        f.gun_clip = clip
+        if info.typed then f.gun1_bullet = Ammo.CurrentBullet(wep) or "" end
+        return f
+    end
+    local list = {}
+    for g = 1, gun_count(info) do
+        if Ammo.GunHasMagazine(wep, g) then list[#list + 1] = gun_mag_data(wep, info, g) end
+    end
+    local f = Ammo.GunFields(list)
+    local in_mags = 0
+    for _, m in ipairs(list) do in_mags = in_mags + (tonumber(m.rounds) or 0) end
+    f.gun_chamber = math.max(0, math.min(Ammo.ChamberOf(wep), clip - in_mags))
+    return f
+end
+
+-- The gun without a magazine (what is in the chamber stays).
+function Ammo.EmptyGun(wep, chamber)
+    local info = Ammo.Identify(wep)
+    if not info then return end
+    local keep = math.max(0, math.min(Ammo.ChamberOf(wep), math.floor(tonumber(chamber) or 0)))
+    if info.akimbo then wep._pdti_pair = { 0, 0 } end
+    wep:set_ammo_remaining_in_clip(keep)
+    wep._issr_no_mag = true
+    wep._issr_mag_gone = true
+    wep._issr_mag_installed = { rounds = 0 }
+end
+
+-- In a heist: a weapon put into your hands gets what its item holds (d: the
+-- weapon item's data). A weapon whose magazine was never settled keeps the
+-- game's full one.
+function Ammo.LoadGun(wep, d)
+    if not wep or type(d) ~= "table" or d.gun_set ~= 1 or d.gun_in == 1 then return false end
+    local info = Ammo.Identify(wep)
+    if not info or Ammo.SkipWeapon(wep) or Ammo.NoReload(wep) then return false end
+    -- The ammunition chosen for this weapon becomes its own first.
+    Ammo.EnsureSupply(wep)
+    if info.loose_fed then
+        local clip = tonumber(d.gun_clip)
+        if not clip then return false end
+        local bullet = nonempty(d.gun1_bullet)
+        if info.typed and bullet then
+            Ammo.SetLoaded(wep, { bullet = bullet })
+            Ammo.ApplyLoaded(wep)
+        end
+        wep:set_ammo_remaining_in_clip(math.max(0, math.floor(clip)))
+        Ammo.SyncTotal(wep)
+        Ammo.MarkPanelDirty()
+        return true
+    end
+    wep._pdti_gun_items = wep._pdti_gun_items or {}
+    Ammo.ClearGunItems(wep)
+    local c = gun_container(info)
+    -- (The gun this one replaced left its magazine in the box: it went with
+    -- that gun.)
+    if c then Ammo.DropGunLeftovers(c) end
+    Ammo.EmptyGun(wep, d.gun_chamber)
+    -- (One magazine per gun: the box takes no more.)
+    for g, m in ipairs(Ammo.StoredMagazines(d)) do
+        local spec = info.typed and { size = m.size, bullet = m.bullet, load = m.load } or nil
+        local data = magazine_data(info.key, m.rounds, info, spec)
+        local ok, item = PDTI.AddItem(c, Ammo.MAGAZINE_ITEM, g - 1, 0, false, 1, data)
+        if not ok then ok, item = PDTI.AddItemAuto(c, Ammo.MAGAZINE_ITEM, 1, data, false) end
+        if ok and type(item) == "table" then put_in(wep, info, g, item, c) end
+    end
+    Ammo.SyncTotal(wep)
+    Ammo.MarkPanelDirty()
+    return true
+end
+
 -- Keeps the weapon's slot and the gun in step (every frame in a heist, and
 -- after every action in the inventory screen).
 function Ammo.SyncGunSlot(wep)
     if not PDTI.session_only or not wep then return end
     local info = Ammo.Identify(wep)
-    if not info or info.loose_fed or Ammo.NoReload(wep) or Ammo.SkipWeapon(wep) then return end
     local c = gun_container(info)
     if not c then return end
     wep._pdti_gun_items = wep._pdti_gun_items or {}
     local items = wep._pdti_gun_items
+    Ammo.DropGunLeftovers(c, items)
+    if info.loose_fed or Ammo.NoReload(wep) or Ammo.SkipWeapon(wep) then return end
     for g = 1, gun_count(info) do
         local id = items[g]
         local item = id and PDTI.FindItem(c, id)
@@ -1572,9 +2359,9 @@ function Ammo.FillBullet(info, entry, pool)
     end
     -- The magazine's own kind first (the bullets on top), then any: a
     -- magazine can hold several kinds, the new rounds go on top.
-    local own = Ammo.BulletId(Ammo.LoadTop(entry.load) or entry.bullet)
+    local own = Ammo.SafeBullet(info, Ammo.LoadTop(entry.load) or entry.bullet)
     if has(own) then return own end
-    for _, id in ipairs(Ammo.BULLET_ORDER) do
+    for _, id in ipairs(Ammo.BulletsFor(info)) do
         if has(id) then return id end
     end
     return nil
@@ -1612,7 +2399,7 @@ function Ammo.FillMagazines(wep, amount, extra)
     -- rounds that are not loose yet are standard rounds.
     local pool, from_loose = {}, {}
     if info.typed then
-        for _, id in ipairs(Ammo.BULLET_ORDER) do
+        for _, id in ipairs(Ammo.BulletsFor(info)) do
             pool[id] = Ammo.LooseOfKey(info.key, id)
             from_loose[id] = pool[id]
         end
@@ -1690,9 +2477,9 @@ end
 function Ammo.BagMagazineSpec(wep, info)
     if not info.typed then return nil, info.capacity end
     local p = PDTI.GetPlanSlot and PDTI.GetPlanSlot(Ammo.SlotOf(wep) or "primary") or {}
-    local size = Ammo.SizeId(p.pick_size)
-    local cap = Ammo.SpecCapacity(info.capacity, size)
-    local load = p.pick_load and Ammo.ParseLoad(p.pick_load) or {}
+    local size = info.sized and Ammo.SizeId(p.pick_size) or nil
+    local cap = info.sized and Ammo.SpecCapacity(info.capacity, size) or info.capacity
+    local load = p.pick_load and Ammo.FilterLoad(info, Ammo.ParseLoad(p.pick_load)) or {}
     -- A smaller magazine: the bottom rounds do not fit.
     local over = Ammo.LoadTotal(load) - cap
     while over > 0 and load[#load] do
@@ -1702,7 +2489,7 @@ function Ammo.BagMagazineSpec(wep, info)
         if load[#load][2] <= 0 then table.remove(load) end
     end
     -- Room left: the chosen bullets at the bottom.
-    Ammo.FitLoad(load, cap, p.pick_bullet)
+    Ammo.FitLoad(load, cap, Ammo.SafeBullet(info, p.pick_bullet))
     return { size = size, bullet = Ammo.LoadTop(load), load = Ammo.LoadString(load) }, cap
 end
 
@@ -1717,7 +2504,7 @@ end
 function Ammo.BagRestock(wep, available)
     local info = Ammo.Identify(wep)
     if not info or info.loose_fed then return nil end
-    local max = math.max(1, tonumber(wep:get_ammo_max()) or 1)
+    local max = math.max(1, tonumber(Ammo.BaseTotal(wep)) or 1)
     local budget = math.floor((tonumber(available) or 1) * max + 1e-6)
     local given = 0
 
@@ -1728,7 +2515,7 @@ function Ammo.BagRestock(wep, available)
         if take > 0 then
             if info.typed then
                 local load = entry.load or Ammo.FitLoad({}, entry.rounds, entry.bullet)
-                local own = Ammo.BulletId(Ammo.LoadTop(load) or entry.bullet)
+                local own = Ammo.SafeBullet(info, Ammo.LoadTop(load) or entry.bullet)
                 load = Ammo.LoadPush(load, own, take)
                 PDTI.EditItems({ update = { { container = entry.container, instance_id = entry.instance_id,
                     data = { rounds = entry.rounds + take, bullet = own, load = Ammo.LoadString(load) } } } })
@@ -1741,6 +2528,7 @@ function Ammo.BagRestock(wep, available)
 
     local spec, cap = Ammo.BagMagazineSpec(wep, info)
     local guard = 0
+    -- New magazines up to the normal number, as long as the bag has rounds.
     while #Ammo.Magazines(info.key) < Ammo.MaxMagCount(wep) and budget - given >= cap and guard < 50 do
         guard = guard + 1
         local ok = Ammo.AddMagazineKey(info.key, cap, info, nil, spec)
@@ -1783,10 +2571,6 @@ function Ammo.StartJob(wep)
     end
     job = job or { list = {}, index = 1, t = 0, filled = 0 }
     job.list[#job.list + 1] = wep
-end
-
-function Ammo.JobActive()
-    return job ~= nil and job.index <= #job.list
 end
 
 function Ammo.StopJob()
@@ -1865,10 +2649,189 @@ local function fill_one_round()
     -- No sound per round: loading a magazine is silent (0.18.0).
 end
 
+------------------------------------- loading a stack into one magazine
+
+-- Loose rounds dropped onto a magazine in the inventory screen are loaded
+-- into it: in a heist one round at a time (round_interval each) until the
+-- magazine is full, the stack runs out, or you do something (shoot, reload,
+-- aim, ...: Ammo.StopLoad); in the menu all at once.
+
+local function find_by_id(instance_id)
+    local found = PDTI.FindItems(function(_, item) return item.instance_id == instance_id end)
+    local entry = found and found[1]
+    if not entry then return nil end
+    return entry.container, entry.item
+end
+
+-- Can this loose stack go into this magazine? Returns true, or false and why.
+function Ammo.CanLoadInto(loose, mag)
+    if type(loose) ~= "table" or type(mag) ~= "table" then return false, "nothing to load" end
+    if loose.item_id ~= Ammo.LOOSE_ITEM or mag.item_id ~= Ammo.MAGAZINE_ITEM then return false, "not rounds and a magazine" end
+    local ld, md = loose.data or {}, mag.data or {}
+    if not ld.queue_key or ld.queue_key ~= md.queue_key then return false, "these rounds do not fit this magazine" end
+    if md.in_gun then return false, "the magazine is in the gun" end
+    if (tonumber(loose.amount) or 1) < 1 then return false, "the stack is empty" end
+    local rounds, cap = math.floor(tonumber(md.rounds) or 0), math.floor(tonumber(md.capacity) or 0)
+    if cap > 0 and rounds >= cap then return false, "the magazine is full" end
+    return true
+end
+
+-- Moves one round from the stack into the magazine, with one save.
+-- Returns true, or false and why it stopped.
+function Ammo.LoadOneRound(loose_id, mag_id)
+    local lc, loose = find_by_id(loose_id)
+    local mc, mag = find_by_id(mag_id)
+    if not loose then return false, "the stack is used up" end
+    if not mag then return false, "the magazine is gone" end
+    local ok, why = Ammo.CanLoadInto(loose, mag)
+    if not ok then return false, why end
+
+    local md = mag.data
+    local rounds = math.floor(tonumber(md.rounds) or 0)
+    local data = { rounds = rounds + 1 }
+    if Ammo.HasLoad(md) or (loose.data and loose.data.bullet) then
+        -- A magazine that knows its bullets: the new round goes on top.
+        local bullet = Ammo.BulletId(loose.data.bullet)
+        local load = Ammo.LoadPush(Ammo.LoadOf(md), bullet, 1)
+        data.bullet = bullet
+        data.load = Ammo.LoadString(load)
+    end
+    local spec = { update = { { container = mc, instance_id = mag_id, data = data } } }
+    local amount = math.floor(tonumber(loose.amount) or 1)
+    if amount > 1 then
+        spec.set_amount = { { container = lc, instance_id = loose_id, amount = amount - 1 } }
+    else
+        spec.remove = { { container = lc, instance_id = loose_id } }
+    end
+    local saved, err = PDTI.EditItems(spec)
+    if not saved then return false, err or "could not save" end
+    return true
+end
+
+-- Loads the whole stack (or until full) at once. Returns the rounds loaded.
+function Ammo.LoadAllInto(loose_id, mag_id)
+    local n = 0
+    while n < 1000 and Ammo.LoadOneRound(loose_id, mag_id) do n = n + 1 end
+    return n
+end
+
+local load_job = nil
+
+-- The inventory screen, if it is open, shows each round going in (not while
+-- something is being dragged: that would lose the drag's preview).
+local function redraw_screen()
+    if PDTI.UIIsDragging and PDTI.UIIsDragging() then return end
+    if PDTI.RedrawUI then pcall(PDTI.RedrawUI) end
+end
+
+local function hint(text) PDTI.Hint(text, 2) end
+
+local function load_done(why)
+    local j = load_job
+    load_job = nil
+    if not j then return end
+    if j.loaded > 0 then
+        log(string.format("loaded %d round(s) into the magazine (%s)", j.loaded, tostring(why)))
+    end
+    if j.loaded > 0 and why ~= "stopped" then hint("Magazine loaded: " .. tostring(why)) end
+    local wep = Ammo.EquippedBase and Ammo.EquippedBase()
+    if wep then pcall(Ammo.SyncTotal, wep) end
+    if Ammo.MarkPanelDirty then pcall(Ammo.MarkPanelDirty) end
+    redraw_screen()
+end
+
+-- Starts loading the stack into the magazine (in a heist), or loads it at
+-- once (in the menu). Returns true, or false and why.
+function Ammo.StartLoad(loose_id, mag_id)
+    local _, loose = find_by_id(loose_id)
+    local _, mag = find_by_id(mag_id)
+    local ok, why = Ammo.CanLoadInto(loose, mag)
+    if not ok then return false, why end
+    if not PDTI.InHeist() then
+        local n = Ammo.LoadAllInto(loose_id, mag_id)
+        return n > 0, string.format("%d round(s) loaded", n)
+    end
+    if load_job then load_done("stopped") end
+    load_job = { loose = loose_id, mag = mag_id, t = 0, loaded = 0 }
+    hint("Loading the magazine... (shooting, reloading or aiming stops)")
+    return true, "loading"
+end
+
+function Ammo.LoadActive()
+    return load_job ~= nil
+end
+
+function Ammo.StopLoad(why)
+    if load_job then load_done(why or "stopped") end
+end
+
+-- Seconds per round packed into a magazine. Skills speed it up through
+-- Ammo.round_speed_mods[name] (functions returning a multiplier, 1.15 = 15%
+-- faster); they multiply. Ammo.round_speed (one function) still counts.
+Ammo.round_speed_mods = Ammo.round_speed_mods or {}
+function Ammo.RoundSpeed()
+    local mul = 1
+    local function apply(f)
+        if type(f) ~= "function" then return end
+        local ok, m = pcall(f)
+        if ok and type(m) == "number" and m > 0 then mul = mul * m end
+    end
+    apply(Ammo.round_speed)
+    for _, f in pairs(Ammo.round_speed_mods) do apply(f) end
+    return mul
+end
+
+function Ammo.RoundInterval()
+    local base = math.max(0.02, tonumber(Ammo.settings.round_interval) or 0.25)
+    base = base / Ammo.RoundSpeed()
+    return math.max(0.02, base)
+end
+
+-- The rounds the magazine that comes out of the gun keeps (a skill can fill
+-- it: Bulletstorm ace). Ammo.eject_rounds(wep, rounds) returns the new count.
+function Ammo.EjectRounds(wep, rounds)
+    local f = Ammo.eject_rounds
+    if type(f) ~= "function" then return rounds end
+    local ok, r = pcall(f, wep, rounds)
+    if ok and type(r) == "number" then return r end
+    return rounds
+end
+
+-- How far a magazine on the floor can be picked up from (Scavenger).
+Ammo.PICKUP_RANGE = 250
+function Ammo.PickupRange()
+    local mul = 1
+    local f = Ammo.pickup_range_mul
+    if type(f) == "function" then
+        local ok, m = pcall(f)
+        if ok and type(m) == "number" and m > 0 then mul = m end
+    end
+    return Ammo.PICKUP_RANGE * mul
+end
+
+local function load_tick(dt)
+    if not load_job then return end
+    load_job.t = load_job.t + (dt or 0)
+    local interval = Ammo.RoundInterval()
+    while load_job and load_job.t >= interval do
+        load_job.t = load_job.t - interval
+        local ok, why = Ammo.LoadOneRound(load_job.loose, load_job.mag)
+        if ok then
+            load_job.loaded = load_job.loaded + 1
+            if Ammo.MarkPanelDirty then pcall(Ammo.MarkPanelDirty) end
+            redraw_screen()
+        else
+            load_done(why)
+        end
+    end
+end
+Ammo.LoadTick = load_tick
+
 function Ammo.Tick(dt)
+    load_tick(dt)
     if not job then return end
     job.t = job.t + (dt or 0)
-    local interval = math.max(0.02, tonumber(Ammo.settings.round_interval) or 0.25)
+    local interval = Ammo.RoundInterval()
     if job.t < interval then return end
     job.t = 0
     fill_one_round()
@@ -1935,7 +2898,7 @@ function Ammo.EnsureSupply(wep)
         return true
     end
 
-    local amount = Ammo.MagAmount(info, wep._name_id) + Ammo.ExtraMags()
+    local amount = Ammo.MagAmount(info, wep._name_id)
     local created, stored = 0, 0
     for _ = 1, amount do
         local ok = Ammo.AddMagazineKey(info.key, info.capacity, info)
@@ -1965,11 +2928,13 @@ function Ammo.OnHeistStart()
     Ammo.plan_max = {}
     job = nil
     local spec = { remove = {} }
-    -- Ammunition chosen in the menu (plan_slot) stays: it becomes the
-    -- weapon's when the weapon is first used. Anything else is left over.
+    -- Ammunition chosen in the menu (plan_weapon; older plans plan_slot)
+    -- stays: it becomes the weapon's when the weapon is first used. Anything
+    -- else is left over.
     for _, entry in ipairs(PDTI.FindItems(function(container, item)
         if item.item_id ~= Ammo.MAGAZINE_ITEM and item.item_id ~= Ammo.LOOSE_ITEM then return false end
-        return not (type(item.data) == "table" and item.data.plan_slot)
+        local d = item.data
+        return not (type(d) == "table" and (d.plan_weapon ~= nil or d.plan_slot ~= nil))
     end)) do
         spec.remove[#spec.remove + 1] = {
             container = entry.container, instance_id = entry.item.instance_id
@@ -2039,13 +3004,16 @@ local function spawn_target(slot)
     return wep, info
 end
 
--- Testing: one magazine's worth of loose rounds for a weapon.
--- With a bullet ("hollow", "ap"), rounds of that kind (assault rifles and
--- SMGs only).
-function Ammo.DevSpawnLoose(slot, bullet)
+-- Testing: one magazine's worth of loose rounds for a weapon (or `rounds`:
+-- Ctrl+click spawns a full stack). With a bullet ("hollow", "ap", "slug"
+-- ...), rounds of that kind (only bullets the weapon takes).
+function Ammo.DevSpawnLoose(slot, bullet, rounds)
     local wep, info, reason = spawn_target(slot)
     if not wep then return false, reason end
-    local rounds = math.max(1, info.capacity or 1)
+    if bullet and bullet ~= "standard" and not Ammo.BulletAllowed(info, bullet) then
+        return false, "this weapon does not take these rounds"
+    end
+    rounds = math.max(1, math.floor(tonumber(rounds) or info.capacity or 1))
     local ok, why = Ammo.AddLooseKey(info.key, rounds, info, bullet)
     if not ok then return false, why end
     pcall(Ammo.SyncTotal, wep)
@@ -2058,10 +3026,10 @@ function Ammo.DevSpawnMagazine(slot, bullet)
     local wep, info, reason = spawn_target(slot)
     if not wep then return false, reason end
     if info.loose_fed then return false, "this weapon is loaded from loose rounds; it has no magazines" end
-    if bullet and bullet ~= "standard" and not info.typed then
-        return false, "only assault rifles and SMGs take other bullets"
+    if bullet and bullet ~= "standard" and not Ammo.BulletAllowed(info, bullet) then
+        return false, "this weapon does not take these rounds"
     end
-    local spec = info.typed and { size = "standard", bullet = bullet } or nil
+    local spec = info.typed and { size = info.sized and "standard" or nil, bullet = bullet } or nil
     local ok = Ammo.AddMagazineKey(info.key, info.capacity, info, Ammo.STORAGE, spec)
     if not ok then return false, "no room in the inventory" end
     pcall(Ammo.SyncTotal, wep)
@@ -2155,10 +3123,24 @@ local function facade_pickup_dropped(tag)
     return ok
 end
 
-local function facade_can_pickup_dropped(tag)
+-- A magazine on the floor can be picked up when it fits in the inventory.
+function Ammo.DroppedFits(tag)
     if not tag or not tag.queue_key then return false end
-    local cap = mag_amount_for(tag.pid, tag.caliber, tag.name_id) * (tag.akimbo and 2 or 1) + Ammo.ExtraMags()
-    return Ammo.MagCount(tag.queue_key) < cap
+    local cap = tag.typed and tag.base_capacity and tag.size
+        and Ammo.SpecCapacity(tag.base_capacity, tag.size) or Ammo.MagCapacity(tag.pid, tag.caliber)
+    local class = nil
+    local wep = Ammo.EquippedBase()
+    local info = wep and Ammo.Identify(wep)
+    if info and info.key == tag.queue_key then class = info.mag_class end
+    local ref = { item_id = Ammo.MAGAZINE_ITEM, data = { capacity = cap, mag_class = class, akimbo = tag.akimbo } }
+    for _, name in ipairs(Ammo.STORAGE) do
+        if PDTI.FindFreeSpace(name, ref, true) then return true end
+    end
+    return false
+end
+
+local function facade_can_pickup_dropped(tag)
+    return Ammo.DroppedFits(tag)
 end
 
 Ammo.facade = {

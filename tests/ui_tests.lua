@@ -62,21 +62,56 @@ T("no supply button for ammunition items", window():find("supply_spare_magazine"
 T("only documented MenuUI parameters used", #ENV.violations == 0, table.concat(ENV.violations, ","))
 T("no full-screen background (it is drawn white)", ENV.menus[#ENV.menus].params.background_blur == nil
   and ENV.menus[#ENV.menus].params.background_color == nil)
-T("two windows, one at each edge", #windows() == 2 and windows()[1].params.position == "LeftCentery"
-  and windows()[2].params.position == "RightCentery")
+local function named(n)
+  for _, w in ipairs(windows()) do if w.params.name == n then return w end end
+end
+T("in the menu three windows: one at each edge, what you bring in the middle", #windows() == 3
+  and windows()[1].params.position == "LeftCentery" and windows()[2].params.position == "RightCentery"
+  and named("pdti_shop") and named("pdti_shop").params.position == "Center")
 for _, w in ipairs(windows()) do
-  T("window " .. w.params.name .. " resized to content", w.pw >= 250 and w.ph > 200, w.pw .. "x" .. w.ph)
+  T("window " .. w.params.name .. " resized to content", w.pw >= 250 and w.ph > 150, w.pw .. "x" .. w.ph)
 end
 T("the pockets, the rig and the loadout are on the left",
   windows()[1]:find("cell_pockets_0_0") and windows()[1]:find("cell_rig_0_0") and windows()[1]:find("loadout_none"))
-T("the backpack and, in the menu, what you bring are on the right",
-  windows()[2]:find("cell_backpack_0_0") and windows()[2]:find("bring_label") and windows()[2]:find("bring_plus_first_aid_kit")
-  and windows()[2]:find("supplies_label") == nil)
+T("the backpack is on the right, what you bring in the middle",
+  windows()[2]:find("cell_backpack_0_0") and windows()[2]:find("bring_label") == nil
+  and named("pdti_shop"):find("bring_label") and named("pdti_shop"):find("bring_plus_first_aid_kit")
+  and named("pdti_shop"):find("bring_plus_trip_mine") and window():find("supplies_label") == nil)
+do
+  -- The items are two to a row.
+  local a, b = named("pdti_shop"):find("bring_plus_first_aid_kit"), named("pdti_shop"):find("bring_plus_doctor_bag")
+  T("two items share a row", a and b and a.params.position[2] == b.params.position[2]
+    and b.params.position[1] > a.params.position[1])
+  local rows = {}
+  for _, c in ipairs(named("pdti_shop").children) do
+    local n = c.params.name or ""
+    if n:find("^bring_plus_") and not n:find("mag_") and not n:find("loose_") then rows[c.params.position[2]] = true end
+  end
+  local items, nrows = #PDTI.Plan.Items(), 0
+  for _ in pairs(rows) do nrows = nrows + 1 end
+  T("so the items take half the rows", nrows == math.ceil(items / 2), nrows .. " rows for " .. items)
+  T("no window is taller than the screen (the large backpack, every item)",
+    windows()[1].ph <= 720 and windows()[2].ph <= 720 and named("pdti_shop").ph <= 720,
+    windows()[1].ph .. "/" .. windows()[2].ph .. "/" .. named("pdti_shop").ph)
+  T("the three windows fit side by side", windows()[1].pw + windows()[2].pw + named("pdti_shop").pw <= 1240)
+  -- A screen too low for the windows: everything is drawn smaller.
+  local menu = ENV.menus[#ENV.menus]
+  local cell_before = windows()[2]:find("cell_backpack_0_0").pw
+  menu._panel = { h = function() return 450 end }
+  PDTI.RedrawUI()
+  local tallest = math.max(windows()[1].ph, windows()[2].ph, named("pdti_shop").ph)
+  T("a screen too low: the windows are drawn smaller to fit", windows()[2]:find("cell_backpack_0_0").pw < cell_before
+    and (tallest <= 450 or windows()[2]:find("cell_backpack_0_0").pw == math.floor(36 * 0.6 + 0.5) - 2), tallest)
+  menu._panel = nil
+  PDTI.SetUIOpen(false)
+  PDTI.SetUIOpen(true)
+  T("opened again, the normal size", windows()[2]:find("cell_backpack_0_0").pw == cell_before)
+end
 do
   local kits = #PDTI.FindItems(function(_, item) return item.item_id == "first_aid_kit" end)
-  windows()[2]:find("bring_plus_first_aid_kit"):click()
+  named("pdti_shop"):find("bring_plus_first_aid_kit"):click()
   local after_plus = #PDTI.FindItems(function(_, item) return item.item_id == "first_aid_kit" end)
-  windows()[2]:find("bring_minus_first_aid_kit"):click()
+  named("pdti_shop"):find("bring_minus_first_aid_kit"):click()
   local after_minus = #PDTI.FindItems(function(_, item) return item.item_id == "first_aid_kit" end)
   T("+ and - in the bring list add and remove one", after_plus == kits + 1 and after_minus == kits, kits .. "/" .. after_plus .. "/" .. after_minus)
 end
@@ -115,10 +150,11 @@ T("items were aligned after building (auto_align is off)",
   (windows()[1].align_calls or 0) >= 1 and windows()[1].dirty == false and windows()[2].dirty == false)
 local lp = all_problems()
 T("no overlapping or out-of-window items", #lp == 0, table.concat(lp, "; "):sub(1, 300))
--- The middle of a 1280x720 screen stays free: the two windows together
--- leave at least half of the width, and each fits the height.
-T("the windows leave the middle of the screen free",
-  windows()[1].pw + windows()[2].pw <= 640 and windows()[1].ph <= 620 and windows()[2].ph <= 620,
+-- The two side windows leave the middle of a 1280x720 screen for what you
+-- bring (in a heist, for the health), and each fits the height (680: the
+-- weapon slots' row is drawn here as in the game, 0.37.0).
+T("the side windows leave the middle of the screen",
+  windows()[1].pw + windows()[2].pw <= 640 and windows()[1].ph <= 680 and windows()[2].ph <= 680,
   windows()[1].pw .. "x" .. windows()[1].ph .. " + " .. windows()[2].pw .. "x" .. windows()[2].ph)
 
 -- 3. pick up and place
@@ -207,7 +243,7 @@ local defs = 0 for _, d in pairs(PDTI.GetItemDefinitions()) do if d.deployable a
 PDTI.SetSessionOnly(true)
 PDTI.RedrawUI()
 T("in a heist the spawner takes the place of the bring list", window():find("supplies_label") ~= nil and window():find("bring_label") == nil)
-T("one spawn button per deployable (items without an effect are not offered)", supply_count() == defs and defs == 4, supply_count() .. " vs " .. defs)
+T("one spawn button per deployable (items without an effect are not offered)", supply_count() == defs and defs == 11, supply_count() .. " vs " .. defs)
 T("no spawn button for items without an effect", window():find("supply_ecm_battery") == nil and window():find("supply_grenade") == nil)
 T("spawn buttons for the ammunition of both guns", window():find("spawn_loose_primary") ~= nil and window():find("spawn_mag_secondary") ~= nil)
 
@@ -237,20 +273,27 @@ window():find("btn_discard"):click()
 T("discard with nothing held changes nothing and explains", (status(window()) or ""):find("Pick up") ~= nil)
 T("state valid after supplies/discard", PDTI.ValidateState() == true)
 
-local function mag_text()
-  local out = {}
-  for _, c in ipairs(window().children) do if c.params.name and c.params.name:find("^mag_line_") then out[#out + 1] = c.params.text end end
-  return table.concat(out, "|")
+window():find("btn_cancel"):click()
+T("the backpack side no longer lists the ammunition", window():find("ammo_label") == nil
+  and window():find("loose_line_1") == nil and window():find("mag_line_1") == nil)
+-- Ctrl+click on a loose spawn button: a full stack.
+do
+  local saved_input = rawget(_G, "Input")
+  local ammo = PDTI.Ammo
+  local got = {}
+  local saved = ammo.DevSpawnLoose
+  ammo.DevSpawnLoose = function(slot, bullet, rounds) got = { slot, rounds } return true, rounds or 30 end
+  local btn = window():find("spawn_loose_primary")
+  if btn then btn:click() end
+  T("a click on loose spawns a magazine's worth", btn ~= nil and got[1] == "primary" and got[2] == nil, tostring(got[2]))
+  _G.Input = { keyboard = function() return { down = function() return true end } end }
+  _G.Idstring = _G.Idstring or function(v) return v end
+  btn = window():find("spawn_loose_primary")
+  if btn then btn:click() end
+  _G.Input = saved_input
+  T("Ctrl+click on loose spawns a full stack", got[2] == ammo.MAX_STACK, tostring(got[2]))
+  ammo.DevSpawnLoose = saved
 end
-window():find("btn_cancel"):click()
-T("magazine panel says when there are none", mag_text():find("No magazines") ~= nil, mag_text())
-PDTI.AddItemAuto("rig", "spare_magazine", 1,
-  { queue_key = "RIFLE|wpn_mag_test", rounds = 30, capacity = 30, caliber = "RIFLE" })
-PDTI.AddItemAuto("rig", "spare_magazine", 1,
-  { queue_key = "RIFLE|wpn_mag_test", rounds = 12, capacity = 30, caliber = "RIFLE" })
-window():find("btn_cancel"):click()
-T("magazine panel shows the magazines that are to hand",
-  mag_text():find("RIFLE") and mag_text():find("30/12"), mag_text())
 
 -- 9c. the health window: every body part, its colour and its HP
 dofile(ROOT .. "lua/body.lua")
@@ -261,8 +304,9 @@ local function hwin()
   for _, w in ipairs(windows()) do if w.params.name == "pdti_health" then return w end end
 end
 local function part(id) return hwin() and hwin():find("health_part_" .. id) end
-T("in a heist a third window shows the health", #windows() == 3 and hwin() ~= nil
-  and hwin().params.position == "CenterBottom")
+T("in a heist a window shows the health", hwin() ~= nil and hwin().params.position == "CenterBottom")
+T("and the middle window of the menu is empty and folded away", named("pdti_shop") and #named("pdti_shop").children == 0
+  and named("pdti_shop").pw == 1 and named("pdti_shop").ph == 1)
 T("a box for every part", part("head") and part("body") and part("arm_l") and part("arm_r")
   and part("leg_l") and part("leg_r"))
 T("each with its HP and its maximum", part("head").params.text == "HEAD\n18 / 18"
@@ -290,6 +334,8 @@ Body.OnHeistStart()
 PDTI.SetSessionOnly(false) -- back in the menu
 PDTI.RedrawUI()
 T("back in the menu the health window is empty", #hwin().children == 0)
+T("and what you bring is back in the middle", named("pdti_shop"):find("bring_label") ~= nil
+  and named("pdti_shop").pw > 1)
 
 -- input blocking with a fake player controller
 local ctrl = { on = true }
@@ -338,13 +384,75 @@ do
       local l, r = windows()[1], windows()[2]
       if PDTI.GetEquipment().rig ~= rig or PDTI.GetEquipment().backpack ~= pack then
         bad[#bad + 1] = rig .. "+" .. pack .. ": not equipped (" .. tostring(status(window())) .. ")"
-      elseif #lp3 > 0 or l.pw + r.pw > 640 or l.ph > 620 or r.ph > 620 then
+      elseif #lp3 > 0 or l.pw + r.pw > 640 or l.ph > 680 or r.ph > 680 then
         bad[#bad + 1] = rig .. "+" .. pack .. ": " .. l.pw .. "x" .. l.ph .. " " .. r.pw .. "x" .. r.ph
           .. " " .. table.concat(lp3, "; "):sub(1, 200)
       end
     end
   end
   T("layout clean for all nine rig and backpack combinations", #bad == 0, table.concat(bad, " | "))
+
+  -- 0.31.0: the room bonuses, every room at tier 3 (the tiers seen before
+  -- count without the safehouse), the biggest options, heavy armour.
+  local real_armour = PDTI.Perks.ArmourPiece
+  PDTI.Perks.ArmourPiece = function() return "heavy_armour" end
+  PDTI.Reset()
+  local all3 = {}
+  for room in pairs(PDTI.Perks.ROOMS) do all3[room] = 3 end
+  PDTI.NoteRoomTiers(all3)
+  window():find("equip_tab_perks"):click()
+  T("the Room bonuses tab opens", PDTI._EquipTab() == "perks" and window():find("perk_general_rig_old_hoxton") ~= nil)
+  T("  it shows the armour's options too", window():find("perk_heavy_armour_jowi") ~= nil)
+  window():find("perk_general_rig_old_hoxton"):click()
+  T("  a click picks Old Hoxton: general rig 5x6", PDTI.GetContainerInfo("rig").width == 5)
+  T("  the line says what it does", (window():find("perk_general_rig_info").params.text or ""):find("Old Hoxton III") ~= nil,
+    window():find("perk_general_rig_info").params.text)
+  PDTI.Perks.OPTIONS.american.ready = false
+  window():find("perk_general_rig_american"):click()
+  T("  a bonus not made yet is refused, with why", PDTI.GetContainerInfo("rig").width == 5
+    and (status(window()) or ""):find("not made yet") ~= nil, status(window()))
+  PDTI.Perks.OPTIONS.american.ready = nil
+  window():find("perk_general_rig_none"):click()
+  T("  No bonus: back to 3x6", PDTI.GetContainerInfo("rig").width == 3)
+  PDTI.SetPerkChoice("assault_rig", "spanish")
+  PDTI.SetPerkChoice("general_rig", "old_hoxton")
+  PDTI.SetPerkChoice("small_backpack", "bodhi")
+  PDTI.SetPerkChoice("medium_backpack", "dragan")
+  PDTI.SetPerkChoice("heavy_armour", "jowi")
+  local bad2 = {}
+  for _, tab in ipairs({ "gear", "perks" }) do
+    for _, rig in ipairs({ "medical_rig", "assault_rig", "general_rig" }) do
+      for _, pack in ipairs({ "small_backpack", "medium_backpack", "large_backpack" }) do
+        PDTI.SetEquipment("rig", rig)
+        PDTI.SetEquipment("backpack", pack)
+        window():find("equip_tab_" .. tab):click()
+        local lp4 = all_problems()
+        local l, r = windows()[1], windows()[2]
+        if #lp4 > 0 or l.pw + r.pw > 640 or l.ph > 680 or r.ph > 680 then
+          bad2[#bad2 + 1] = tab .. " " .. rig .. "+" .. pack .. ": " .. l.pw .. "x" .. l.ph .. " " .. r.pw .. "x" .. r.ph
+            .. " " .. table.concat(lp4, "; "):sub(1, 200)
+        end
+      end
+    end
+  end
+  T("layout clean with the biggest room bonuses, both tabs", #bad2 == 0, table.concat(bad2, " | "))
+  -- Clover's loot slots (2x4) next to the medium backpack.
+  PDTI.SetEquipment("backpack", "medium_backpack")
+  PDTI.SetPerkChoice("medium_backpack", "clover")
+  local bad3 = {}
+  for _, rig in ipairs({ "medical_rig", "assault_rig", "general_rig" }) do
+    PDTI.SetEquipment("rig", rig)
+    window():find("equip_tab_gear"):click()
+    local lp5 = all_problems()
+    local l, r = windows()[1], windows()[2]
+    if #lp5 > 0 or l.ph > 680 or r.ph > 680 or not window():find("cell_loot_slot_1_3") then
+      bad3[#bad3 + 1] = rig .. ": " .. l.ph .. " " .. r.ph .. " " .. table.concat(lp5, "; "):sub(1, 200)
+    end
+  end
+  T("Clover's loot slots: drawn next to the backpack, layout clean", #bad3 == 0, table.concat(bad3, " | "))
+  window():find("equip_tab_gear"):click()
+  PDTI.Perks.ArmourPiece = real_armour
+  PDTI.Reset()
 end
 
 -- 10. window not ready yet (deferred create_items)
@@ -365,6 +473,422 @@ PDTI.UIRotateHeld = real_rotate
 local logged = false
 for _, l in ipairs(ENV.logs) do if l:find("callback error") and l:find("boom") then logged = true end end
 T("callback error is contained and logged", ok_click == true and logged)
+
+-- 12. a second click without moving the mouse: after every redraw the menu
+-- is told on its next update where the mouse is, so the new button under it
+-- is highlighted (MenuUI only takes a click on the highlighted item).
+do
+  local menu = ENV.menus[#ENV.menus]
+  local saved = rawget(_G, "managers")
+  _G.managers = _G.managers or {}
+  local had_pointer = managers.mouse_pointer
+  managers.mouse_pointer = { _mouse = { world_position = function() return 123, 45 end } }
+  menu.next_update, menu.moved = {}, 0
+  window():find("btn_rotate"):click()
+  T("a redraw asks for the mouse on the next update", #(menu.next_update or {}) >= 1)
+  menu:update()
+  T("which moves the mouse to where it is", (menu.moved or 0) >= 1 and menu.moved_at[1] == 123 and menu.moved_at[2] == 45)
+  PDTI.SetUIOpen(false)
+  menu.next_update, menu.moved = {}, 0
+  PDTI._UIRehighlight()
+  T("nothing is asked while the screen is closed", #menu.next_update == 0)
+  PDTI.SetUIOpen(true)
+  managers.mouse_pointer = had_pointer
+  _G.managers = saved
+end
+
+-- 13. text that is too wide for its box gets a smaller font
+do
+  local fit = PDTI._UIFitFont
+  T("short text keeps its font", fit("30/30", 40, 30, 11) == 11)
+  T("a long line gets smaller", fit("Combined Tactical Vest", 60, nil, 13) < 13)
+  T("never below 8", fit(string.rep("W", 80), 30, 20, 13) == 8)
+  T("two lines must fit the height", fit("30\nHP+", 100, 18, 13) < 13 and fit("30\nHP+", 100, 40, 13) == 13)
+  local small = 0
+  for _, c in ipairs(window().children) do
+    local fs, t = c.params.font_size, c.params.text
+    if c.params.name and c.params.name:find("^cell_") and t and t ~= "" then
+      for part in (t .. "\n"):gmatch("(.-)\n") do
+        if #part * fs * 0.55 > c.pw - 4 + 0.01 and fs > 8 then small = small + 1 end
+      end
+    end
+  end
+  T("every cell label fits its cell", small == 0, small)
+end
+
+-- 0.29.0: in the menu the middle window has tabs; captured loot comes first.
+do
+  local Stash = PDTI.Stash
+  PDTI.SetUIOpen(false)
+  local d = Stash._Data()
+  d.pending = {
+    { id = 1, carry_id = "gold", quality = 2, mods = "light", value = 20000 },
+    { id = 2, carry_id = "money", quality = 1, mods = "", value = 12000 }
+  }
+  d.next_id = 3
+  PDTI.SetUIOpen(true)
+  local shop = named("pdti_shop")
+  T("captured loot waiting: its tab opens first", shop:find("cap_keep_1") and shop:find("cap_sell_2")
+    and shop:find("bring_label") == nil)
+  T("the tab names how many wait", shop:find("shop_tab_captured").params.text == "Captured (2)")
+  T("a High quality bag is coloured, a Standard one is not", shop:find("cap_line_1").params.foreground ~= nil
+    and shop:find("cap_line_2").params.foreground == nil)
+  T("its modifier is named", shop:find("cap_line_1").params.text:find("Light", 1, true) ~= nil,
+    shop:find("cap_line_1").params.text)
+  shop:find("cap_keep_1"):click()
+  shop = named("pdti_shop")
+  T("Stash: the bag moves to the stash", #Stash.Bags() == 1 and #Stash.Pending() == 1 and shop:find("cap_keep_1") == nil)
+  shop:find("shop_tab_stash"):click()
+  shop = named("pdti_shop")
+  T("the stash tab lists it with a sell button", shop:find("stash_sell_1") ~= nil and shop:find("cap_keep_2") == nil)
+  for i = 2, 12 do d.bags[i] = { id = 100 + i, carry_id = "gold", quality = 1, mods = "", value = 1 } end
+  PDTI.RedrawUI()
+  T("a full stash still fits the screen", named("pdti_shop").ph <= 720, named("pdti_shop").ph)
+  named("pdti_shop"):find("shop_tab_captured"):click()
+  named("pdti_shop"):find("cap_keep_2"):click()
+  T("a full stash: the bag waits and the reason is shown", #Stash.Pending() == 1
+    and tostring(status(window())):find("full") ~= nil, status(window()))
+  named("pdti_shop"):find("shop_tab_bring"):click()
+  T("the bring list is a tab away", named("pdti_shop"):find("bring_label") ~= nil)
+  T("only documented MenuUI parameters used (stash)", #ENV.violations == 0, table.concat(ENV.violations, ","))
+  d.bags, d.pending = {}, {}
+
+  -- 0.33.1: the market opens through Scarface, not from the inventory.
+  local M = PDTI.Market
+  local real_today = M.Today
+  M.Today = function() return "2026-11-17" end
+  T("the inventory has no market tab", named("pdti_shop"):find("shop_tab_market") == nil
+    and named("pdti_shop"):find("shop_tab_stash") ~= nil)
+  -- The game's bag values: 14 loot types (more than fit the list at once).
+  local had_td = rawget(_G, "tweak_data")
+  _G.tweak_data = had_td or {}
+  local real_carry, real_mm = tweak_data.carry, tweak_data.money_manager
+  tweak_data.carry = { small_loot = { ring = true }, ring = { type = "light", bag_value = "gold" },
+    car = { type = "heavy", bag_value = "gold", is_vehicle = true } }
+  tweak_data.money_manager = { bag_values = { gold = 2875, money = 1500, meth = 13000 } }
+  for i = 1, 12 do tweak_data.carry["loot" .. i] = { type = "medium", bag_value = i % 2 == 0 and "money" or "meth" } end
+  tweak_data.carry.gold = { type = "heavy", bag_value = "gold" }
+  tweak_data.carry.money = { type = "medium", bag_value = "money" }
+  T("the market opens on its own", PDTI.OpenMarket() == true and PDTI.IsMarketOpen())
+  local left_w = windows()[1]
+  local plist = left_w:find("market_prices")
+  T("  the prices: every loot type in a list that scrolls (not vehicles, not small loot)", plist ~= nil
+    and #plist.children == 14 and plist.params.scrollbar == true and plist:find("market_price_car") == nil
+    and plist:find("market_price_ring") == nil, plist and #plist.children)
+  local grow = plist:find("market_price_gold")
+  T("  a row: name, now, real", grow ~= nil and grow.params.text:find("now $2.9k", 1, true) ~= nil
+    and grow.params.text:find("real $2.9k", 1, true) ~= nil, grow and grow.params.text)
+  T("  the graph: 7 bars, the last is today", left_w:find("market_graph_bar_7") ~= nil and left_w:find("market_graph_bar_8") == nil
+    and left_w:find("market_graph_day_7").params.text == "Today")
+  T("  at first the graph shows the first type", left_w:find("market_graph_title").params.text:find("gold", 1, true) ~= nil)
+  plist:find("market_price_money"):click()
+  T("  a click on a row shows its graph", left_w:find("market_graph_title").params.text:find("money", 1, true) ~= nil
+    and left_w:find("market_graph_bar_1") ~= nil and #left_w:find("market_prices").children == 14,
+    left_w:find("market_graph_title").params.text)
+  -- A redraw (health, ammunition) keeps the list as it is: still scrolled.
+  local builds = PDTI._UIPriceBuilds
+  local same_list = left_w:find("market_prices")
+  PDTI.RedrawUI(); PDTI.RedrawUI()
+  T("  a redraw keeps the price list (it stays scrolled)", PDTI._UIPriceBuilds == builds
+    and left_w:find("market_prices") == same_list and #same_list.children == 14
+    and left_w:find("market_graph_bar_7") ~= nil and left_w:find("market_prices_label") ~= nil)
+  local glp2 = layout_problems(left_w)
+  T("  after it nothing is doubled or overlaps", #glp2 == 0, table.concat(glp2, "; "))
+  tweak_data.carry.loot99 = { type = "light", bag_value = "gold" }
+  PDTI.RedrawUI()
+  T("  new rows: the list is made again", PDTI._UIPriceBuilds == builds + 1 and #left_w:find("market_prices").children == 15
+    and #layout_problems(left_w) == 0)
+  tweak_data.carry.loot99 = nil
+  PDTI.RedrawUI()
+  -- Scarface's dialog closing turns the controls on: off again next frame.
+  local ctl = { on = false }
+  function ctl:enabled() return self.on end
+  function ctl:set_enabled(v) self.on = v end
+  PDTI._UIInputBlock({ controller = ctl, was_enabled = false })
+  T("  controls already off: nothing to do", PDTI.UIKeepInputBlocked() == false and ctl.on == false)
+  ctl.on = true
+  T("  turned on by something else: off again", PDTI.UIKeepInputBlocked() == true and ctl.on == false
+    and PDTI._UIInputBlock().was_enabled == true)
+  local glp = layout_problems(left_w)
+  T("  the prices window: nothing overlaps", #glp == 0, table.concat(glp, "; "))
+  shop = named("pdti_shop")
+  T("  the inventory is not shown: prices on the left, the right empty, no tabs", windows()[2].pw <= 1
+    and windows()[1]:find("market_prices") ~= nil and windows()[1]:find("cell_pockets_0_0") == nil
+    and shop:find("shop_tab_stash") == nil and shop:find("market_close") ~= nil)
+  T("the market: three offers with Accept buttons, no contracts yet", shop:find("market_accept_3") ~= nil
+    and shop:find("market_accept_4") == nil and shop:find("market_active_none") ~= nil)
+  local offer = M.Offers()[1]
+  T("  an offer says what it asks and pays", shop:find("market_offer_1").params.text:find("pays x", 1, true) ~= nil,
+    shop:find("market_offer_1").params.text)
+  shop:find("market_accept_1"):click()
+  shop = named("pdti_shop")
+  T("Accept: it becomes your contract", #M.Active() == 1 and shop:find("market_deliver_1") ~= nil
+    and shop:find("market_accept_3") == nil)
+  shop:find("market_deliver_1"):click()
+  T("  Deliver without the bags: refused, the reason shown in the market", #M.Active() == 1
+    and named("pdti_shop"):find("market_status") ~= nil
+    and named("pdti_shop"):find("market_status").params.text:find("bags it needs") ~= nil)
+  for i = 1, offer.count do d.bags[i] = { id = 300 + i, carry_id = offer.carry_id, quality = 3, mods = "", value = 1000 } end
+  PDTI.RedrawUI()
+  named("pdti_shop"):find("market_deliver_1"):click()
+  T("  with them: delivered, the bags are gone", #M.Active() == 0 and #Stash.Bags() == 0)
+  for i = 1, 2 do M.Accept(M.Offers()[1].key) end
+  for i = 1, 12 do d.bags[i] = { id = 400 + i, carry_id = "gold", quality = 3, mods = "light,runner", value = 123456 } end
+  M._State().high_rolls = 1
+  PDTI.RedrawUI()
+  local ws = all_problems and all_problems() or {}
+  local tiny = {}
+  for _, ch in ipairs(named("pdti_shop").children) do
+    local nm = ch.params.name or ""
+    if nm:find("^market_") and (ch.params.font_size or 99) < 11 then tiny[#tiny + 1] = nm .. "=" .. ch.params.font_size end
+  end
+  T("the market's lines stay readable (font 11 or more)", #tiny == 0, table.concat(tiny, " "))
+  T("a busy market fits the screen", named("pdti_shop").ph <= 720 and #ws == 0, named("pdti_shop").ph .. " " .. table.concat(ws, "; "))
+  T("only documented MenuUI parameters used (market)", #ENV.violations == 0, table.concat(ENV.violations, ","))
+  -- 0.36.0: the weapons market (a tab of Scarface's market).
+  do
+    local A = PDTI.Armory
+    local had_m = rawget(_G, "managers")
+    _G.managers = had_m or {}
+    local saved = {}
+    for _, k in ipairs({ "money", "weapon_factory", "blackmarket", "localization" }) do saved[k] = managers[k] end
+    local cash = 100000
+    managers.money = { total = function() return cash end, deduct_from_total = function(_, v) cash = cash - v end,
+      get_weapon_price_modified = function(_, id) return id == "pistol_a" and 5000 or 20000 end,
+      get_weapon_modify_price = function() return 0 end }
+    managers.weapon_factory = { get_factory_id_by_weapon_id = function(_, id) return "f_" .. id end,
+      get_default_blueprint_by_factory_id = function(_, f) return { f .. "_body" } end }
+    managers.blackmarket = { weapon_unlocked = function() return true end,
+      _calculate_weapon_concealment = function() return 20 end }
+    managers.localization = { text = function(_, id) return id end }
+    local real_weapon = tweak_data.weapon
+    tweak_data.weapon = {}
+    for i = 1, 12 do
+      tweak_data.weapon["rifle_" .. i] = { use_data = { selection_index = 2 }, categories = { "assault_rifle" }, name_id = "Rifle " .. i }
+    end
+    tweak_data.weapon.pistol_a = { use_data = { selection_index = 1 }, categories = { "pistol" }, name_id = "Pistol A" }
+    local real_fr, real_sr = A.FactorRoll, A.StockRoll
+    A.FactorRoll = function() return 0.5 end
+    A.StockRoll = function() return 0.3 end
+    A.Reset()
+    os.remove((os.getenv("PDTI_TEST_DIR") or "/tmp/pdti_test_ui") .. "/pdti_armory.json")
+    A.Reset()
+    named("pdti_shop"):find("market_tab_weapons"):click()
+    local lw = windows()[1]
+    local wl = lw:find("wmarket_prices")
+    T("the Weapons tab: every weapon in a list that scrolls, the loot prices gone", wl ~= nil and #wl.children == 13
+      and wl.params.scrollbar == true and lw:find("market_prices") == nil, wl and #wl.children)
+    local prow = wl:find("wmarket_price_pistol_a")
+    T("  a row: name, today, normal, how many for sale", prow ~= nil and prow.params.text:find("Pistol A", 1, true) ~= nil
+      and prow.params.text:find("1 for sale", 1, true) ~= nil and prow.params.text:find("normal $5.0k", 1, true) ~= nil,
+      prow and prow.params.text)
+    prow:click()
+    local shop2 = named("pdti_shop")
+    T("  a click picks it: its price and a Buy button", shop2:find("wmarket_pick").params.text:find("Pistol A", 1, true) ~= nil
+      and shop2:find("wmarket_buy") ~= nil, shop2:find("wmarket_pick").params.text)
+    T("  the list stays (not made again)", windows()[1]:find("wmarket_prices") == wl)
+    shop2:find("wmarket_buy"):click()
+    T("Buy: the weapon is yours, paid", #A.Weapons() == 1 and cash == 95000, cash)
+    T("  none left today", named("pdti_shop"):find("wmarket_stock").params.text:find("None", 1, true) ~= nil)
+    named("pdti_shop"):find("wmarket_buy"):click()
+    T("  again: refused, the reason shown", #A.Weapons() == 1 and named("pdti_shop"):find("market_status") ~= nil)
+    local wlp = layout_problems(windows()[1])
+    T("  the weapons window: nothing overlaps", #wlp == 0, table.concat(wlp, "; "))
+    named("pdti_shop"):find("market_tab_loot"):click()
+    T("back to Loot: the loot prices again, the weapons list gone", windows()[1]:find("market_prices") ~= nil
+      and windows()[1]:find("wmarket_prices") == nil)
+    -- 0.37.0: your weapons are grid items: the inventory's Locker tab.
+    local had_global = rawget(_G, "Global")
+    _G.Global = had_global or {}
+    local had_bm = Global.blackmarket_manager
+    Global.blackmarket_manager = { crafted_items = { primaries = {}, secondaries = {} } }
+    tweak_data.weapon.amcar = { use_data = { selection_index = 2 }, categories = { "assault_rifle" }, name_id = "AMCAR" }
+    PDTI.SetUIOpen(false)
+    PDTI.SetUIOpen(true)
+    local shop3 = named("pdti_shop")
+    T("the inventory's Locker tab names how many weapons you own", shop3:find("shop_tab_locker") ~= nil
+      and shop3:find("shop_tab_locker").params.text == "Locker (2)" and shop3:find("shop_tab_weapons") == nil)
+    shop3:find("shop_tab_locker"):click()
+    shop3 = named("pdti_shop")
+    T("  the 12x10 locker (the weapon slots are not here)", shop3:find("cell_locker_11_9") ~= nil
+      and shop3:find("cell_locker_12_0") == nil and shop3:find("cell_hand_primary_0_0") == nil)
+    T("  the bought pistol is in the locker, named", shop3:find("cell_locker_0_0").params.text:find("Pistol", 1, true) ~= nil,
+      shop3:find("cell_locker_0_0").params.text)
+    local function slot_text(s) return tostring(window():find("weapon_box_" .. s).params.text) end
+    T("no primary owned: the free AMCAR is a real weapon in PRI; SEC is empty (the pistol is in the locker)",
+      slot_text("primary"):find("PRI AMCAR", 1, true) ~= nil and PDTI.Armory.HandItem("primaries").data.free == true
+      and slot_text("secondary"):find("SEC empty", 1, true) ~= nil, slot_text("primary") .. " / " .. slot_text("secondary"))
+    -- The AMCAR dragged off PRI into the backpack, and back onto PRI.
+    local amcar = PDTI.Armory.HandItem("primaries")
+    local bx, by = PDTI.FindFreeSpace("backpack", amcar, false)
+    PDTI.UIDragStart("hand_primary", 0, 0)
+    PDTI.UIDragDrop({ container = "backpack", x = bx, y = by })
+    PDTI.RedrawUI()
+    T("PRI's AMCAR dragged into the backpack: it is there at its 4x2, PRI empty, no second one given",
+      PDTI.FindItem("backpack", amcar.instance_id) ~= nil and PDTI.GetOccupancyMap("backpack").cells[by + 2][bx + 4]
+      == amcar.instance_id and slot_text("primary"):find("PRI empty", 1, true) ~= nil and #PDTI.Armory.Weapons() == 2,
+      slot_text("primary"))
+    T("  both slots empty: no weapon in either",
+      slot_text("primary"):find("no weapon", 1, true) ~= nil and slot_text("secondary"):find("no weapon", 1, true) ~= nil,
+      slot_text("primary") .. " / " .. slot_text("secondary"))
+    PDTI.UIDragStart("backpack", bx + 2, by + 1) -- grabbed by a middle cell
+    PDTI.UIDragDrop({ container = "hand_primary", x = 0, y = 0 })
+    PDTI.RedrawUI()
+    T("  and from the backpack back onto PRI", PDTI.FindItem("hand_primary", amcar.instance_id) ~= nil
+      and slot_text("primary"):find("PRI AMCAR", 1, true) ~= nil)
+    -- Drag the pistol from the locker onto SEC.
+    local function locker_pistol()
+      for _, e in ipairs(PDTI.FindItems(function(c, it)
+        return it.item_id == "weapon" and it.data.weapon_id == "pistol_a" end)) do return e end
+    end
+    local lp0 = locker_pistol()
+    PDTI.UIDragStart("locker", lp0.item.x + 1, lp0.item.y) -- grabbed by its second cell
+    local pv = PDTI.UIDragPreview("hand_primary", 0, 0)
+    T("dragging the pistol over PRI: red (a secondary)", pv and pv.valid == false and pv.container == "hand_primary"
+      and pv.w == 1 and pv.h == 1, pv and pv.reason)
+    pv = PDTI.UIDragPreview("hand_secondary", 0, 0)
+    T("  over SEC: green, the whole slot", pv and pv.valid == true and pv.x == 0 and pv.y == 0 and pv.w == 1 and pv.h == 1)
+    PDTI._UIShowPreview({ container = "hand_secondary", x = 0, y = 0 })
+    local sec_box = window():find("weapon_box_secondary")
+    T("  the SEC box itself lights up green under the mouse", #(sec_box.rects or {}) == 1
+      and sec_box.rects[1].params.color ~= nil and #(window():find("weapon_box_primary").rects or {}) == 0)
+    PDTI.UIDragDrop({ container = "hand_secondary", x = 0, y = 0 })
+    PDTI.RedrawUI()
+    T("  dropped: the pistol is in SEC, shown there", locker_pistol().container == "hand_secondary"
+      and slot_text("secondary"):find("Pistol A", 1, true) ~= nil and slot_text("secondary"):find("empty", 1, true) == nil,
+      slot_text("secondary"))
+    T("  the game's secondary is it now (the screen syncs as it redraws)",
+      Global.blackmarket_manager.crafted_items.secondaries[1].weapon_id == "pistol_a"
+      and Global.blackmarket_manager.crafted_items.primaries[1].weapon_id == "amcar")
+    -- Off the slot into the backpack (its own size there), and back by clicks.
+    PDTI.UIDragStart("hand_secondary", 0, 0)
+    PDTI.UIDragDrop({ container = "backpack", x = 0, y = 0 })
+    local bp = locker_pistol()
+    T("dragged off SEC into the backpack: a 2x1 pistol there again", bp.container == "backpack"
+      and PDTI.GetOccupancyMap("backpack").cells[1][2] == bp.item.instance_id)
+    PDTI.RedrawUI()
+    T("  SEC is empty: no weapon there (you own a secondary, so none is given)",
+      slot_text("secondary"):find("SEC empty\nno weapon", 1, true) ~= nil and #PDTI.Armory.Weapons() == 2,
+      slot_text("secondary"))
+    window():find("cell_backpack_0_0"):click()
+    window():find("weapon_box_secondary"):click()
+    T("click it, click SEC: in the slot", locker_pistol().container == "hand_secondary")
+    window():find("weapon_box_secondary"):click()
+    window():find("weapon_box_primary"):click()
+    T("  a secondary does not go onto PRI", locker_pistol().container == "hand_secondary")
+    PDTI.UICancelHeld()
+    local applied, real_apply = 0, PDTI.Armory.ApplyHands
+    PDTI.Armory.ApplyHands = function() applied = applied + 1; return false end
+    PDTI.RedrawUI()
+    PDTI.Armory.ApplyHands = real_apply
+    T("every redraw lets the weapons in hand follow the slots (a heist, the safehouse)", applied == 1)
+    local saved_input = rawget(_G, "Input")
+    _G.Input = { keyboard = function() return { down = function() return true end } end }
+    _G.Idstring = _G.Idstring or function(v) return v end
+    window():find("weapon_box_secondary"):click()
+    _G.Input = saved_input
+    T("Ctrl+click on SEC: back to the locker", locker_pistol().container == "locker"
+      and PDTI.UIGetStatusText() == "Moved Pistol A to the locker", PDTI.UIGetStatusText())
+    PDTI.UIQuickTransfer("locker", locker_pistol().item.instance_id)
+    T("  Ctrl+click in the locker: onto SEC", locker_pistol().container == "hand_secondary"
+      and PDTI.UIGetStatusText() == "Moved Pistol A to the secondary slot", PDTI.UIGetStatusText())
+    PDTI.RedrawUI()
+    local lp = layout_problems(named("pdti_shop"))
+    local lpl = layout_problems(windows()[1])
+    T("  the Locker tab and the left window: nothing overlaps (no price graph left from the market), they fit the screen",
+      #lp == 0 and #lpl == 0 and windows()[1]:find("market_graph_title") == nil
+      and named("pdti_shop").ph <= 720 and windows()[1].ph <= 720,
+      table.concat(lp, "; ") .. table.concat(lpl, "; ") .. " " .. tostring(named("pdti_shop").ph))
+    T("only documented MenuUI parameters used (locker)", #ENV.violations == 0, table.concat(ENV.violations, ","))
+    named("pdti_shop"):find("shop_tab_bring"):click()
+    PDTI.SetUIOpen(false)
+    PDTI.OpenMarket()
+    A.FactorRoll, A.StockRoll = real_fr, real_sr
+    tweak_data.weapon = real_weapon
+    for k, v in pairs(saved) do managers[k] = v end
+    if not had_m then _G.managers = nil end
+    for _, e in ipairs(PDTI.FindItems(function(_, it) return it.item_id == "weapon" end)) do
+      PDTI.RemoveItem(e.container, e.item.instance_id)
+    end
+    Global.blackmarket_manager = had_bm
+    if not had_global then _G.Global = nil end
+  end
+
+  named("pdti_shop"):find("market_close"):click()
+  T("Close: the screen is closed", not PDTI.IsUIOpen() and not PDTI.IsMarketOpen())
+  T("  and the controls are on again", ctl.on == true and PDTI._UIInputBlock() == nil)
+  T("  closed: nothing is kept off", PDTI.UIKeepInputBlocked() == false)
+  T("  the price list is gone", windows()[1]:find("market_prices") == nil)
+  PDTI.SetUIOpen(true)
+  T("the inventory after it is the inventory again", not PDTI.IsMarketOpen() and windows()[1].pw > 1
+    and named("pdti_shop"):find("market_accept_1") == nil and named("pdti_shop"):find("shop_tab_bring") ~= nil)
+  named("pdti_shop"):find("shop_tab_bring"):click()
+  d.bags, d.pending = {}, {}
+  M._State().active, M._State().high_rolls = {}, 0
+  M.Today = real_today
+  tweak_data.carry, tweak_data.money_manager = real_carry, real_mm
+  if not had_td then _G.tweak_data = nil end
+end
+
+-- 0.29.1: the end screen's captured loot window.
+do
+  local Stash = PDTI.Stash
+  PDTI.SetUIOpen(false)
+  local d = Stash._Data()
+  d.bags, d.pending = {}, {}
+  for i = 1, 3 do
+    d.pending[i] = { id = 200 + i, carry_id = "gold", quality = i == 1 and 3 or 1, mods = i == 1 and "padded" or "",
+      value = 1000 * i }
+  end
+  local menus_before = #ENV.menus
+  T("BeardLib still making the window: try again", PDTI.SetCaptureOpen(true) == "wait" and not PDTI.IsCaptureOpen())
+  ENV.menus[#ENV.menus]:finish()
+  T("the captured loot window opens", PDTI.SetCaptureOpen(true) == true and PDTI.IsCaptureOpen())
+  local menu = ENV.menus[#ENV.menus]
+  local win = menu.children[1]
+  T("its own window, in the middle", #ENV.menus == menus_before + 1 and win.params.name == "pdti_capture"
+    and win.params.position == "Center")
+  T("enabled over the end screen", menu:Enabled())
+  T("every bag has Stash and Sell", win:find("cap_keep_201") and win:find("cap_sell_202") and win:find("cap_keep_203"))
+  T("and says what to do", win:find("cap_space").params.text:find("Decide for every bag", 1, true) ~= nil)
+  T("no inventory screen behind it", PDTI.IsUIOpen() == false)
+  win:find("cap_sell_201"):click()
+  T("Sell: the bag is gone from the window", win:find("cap_sell_201") == nil and win:find("cap_keep_202") ~= nil)
+  T("the inventory screen stays closed", PDTI.IsUIOpen() == false)
+  for i = 1, 12 do d.bags[i] = { id = 300 + i, carry_id = "gold", quality = 1, mods = "", value = 1 } end
+  win:find("cap_keep_202"):click()
+  T("a full stash: the reason is shown in the window", win:find("cap_status") ~= nil
+    and win:find("cap_status").params.text:find("full", 1, true) ~= nil)
+  d.bags = {}
+  win:find("cap_keep_all"):click()
+  T("the last bags chosen: the window closes", PDTI.IsCaptureOpen() == false and not menu:Enabled()
+    and #Stash.Pending() == 0)
+  for i = 1, 40 do d.pending[i] = { id = 400 + i, carry_id = "gold", quality = 1, mods = "", value = 1 } end
+  PDTI.SetCaptureOpen(true)
+  T("40 bags: drawn smaller to fit the screen", win.ph <= 720, win.ph)
+  win:find("cap_sell_all"):click()
+  T("sell all now closes it", PDTI.IsCaptureOpen() == false and #Stash.Pending() == 0)
+  T("its keys are gone once it is closed", #PDTI._CaptureTriggers() == 0)
+  d.pending = { { id = 500, carry_id = "gold", quality = 1, mods = "", value = 1 },
+    { id = 501, carry_id = "gold", quality = 1, mods = "", value = 1 } }
+  PDTI.SetCaptureOpen(true)
+  local function key(k) for _, t in ipairs(PDTI._CaptureTriggers()) do if t.key == k then return t end end end
+  T("S and X work without the mouse", key("s") ~= nil and key("x") ~= nil)
+  local stashed_before = #Stash.Bags()
+  key("s").clbk()
+  T("S: everything that fits is stashed, the window closes", #Stash.Pending() == 0
+    and #Stash.Bags() == stashed_before + 2 and PDTI.IsCaptureOpen() == false, #Stash.Pending() .. "/" .. #Stash.Bags() .. "/" .. tostring(PDTI.IsCaptureOpen()))
+  d.bags = {}
+  for i = 1, 12 do d.bags[i] = { id = 600 + i, carry_id = "gold", quality = 1, mods = "", value = 1 } end
+  d.pending = { { id = 700, carry_id = "gold", quality = 1, mods = "", value = 1 } }
+  PDTI.SetCaptureOpen(true)
+  key("s").clbk()
+  T("S with a full stash: still open, the reason shown", PDTI.IsCaptureOpen() and #Stash.Pending() == 1)
+  key("x").clbk()
+  T("X: sold, closed", PDTI.IsCaptureOpen() == false and #Stash.Pending() == 0)
+  T("only documented MenuUI parameters used (end screen)", #ENV.violations == 0, table.concat(ENV.violations, ","))
+  d.bags, d.pending = {}, {}
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

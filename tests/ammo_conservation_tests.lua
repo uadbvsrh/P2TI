@@ -100,5 +100,107 @@ for _, akimbo in ipairs({ false, true }) do
     #bad == 0, table.concat(bad, "; "))
 end
 
+-- 0.27.x: the load helpers and SyncGunSlot build less garbage; the results
+-- must be exactly what the plain versions give.
+do
+  -- the plain versions (two passes, copies)
+  local function ref_parse(value)
+    local out = {}
+    if type(value) == "table" then
+      for _, part in ipairs(value) do
+        local b, n = part[1] or part.bullet, math.floor(tonumber(part[2] or part.n) or 0)
+        if Ammo.BULLETS[b] and n > 0 then out[#out + 1] = { b, n } end
+      end
+    elseif type(value) == "string" then
+      for b, n in value:gmatch("(%a+):(%d+)") do
+        n = math.floor(tonumber(n) or 0)
+        if Ammo.BULLETS[b] and n > 0 then out[#out + 1] = { b, n } end
+      end
+    end
+    local merged = {}
+    for _, part in ipairs(out) do
+      local last = merged[#merged]
+      if last and last[1] == part[1] then last[2] = last[2] + part[2]
+      else merged[#merged + 1] = { part[1], part[2] } end
+    end
+    return merged
+  end
+  local function ref_string(load)
+    local parts = {}
+    for _, part in ipairs(ref_parse(load)) do parts[#parts + 1] = part[1] .. ":" .. part[2] end
+    return table.concat(parts, ",")
+  end
+  local function ref_filter(info, load)
+    local out = {}
+    for _, part in ipairs(load or {}) do out[#out + 1] = { Ammo.SafeBullet(info, part[1]), part[2] } end
+    return ref_parse(out)
+  end
+  local function same(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do if a[i][1] ~= b[i][1] or a[i][2] ~= b[i][2] then return false end end
+    return true
+  end
+  math.randomseed(77)
+  local names = { "standard", "ap", "hollow", "bogus", false }
+  local bad = {}
+  local wep = ENV.make_weapon("test_ar", { "wpn_no_part" }, 30)
+  local info = Ammo.Identify(wep)
+  for i = 1, 400 do
+    local list, str = {}, {}
+    for _ = 1, math.random(0, 6) do
+      local b, n = names[math.random(1, #names)], math.random(-2, 12)
+      if math.random() < 0.15 then list[#list + 1] = { bullet = b, n = n } else list[#list + 1] = { b, n } end
+      str[#str + 1] = tostring(b) .. ":" .. n
+    end
+    local text = table.concat(str, ",")
+    for _, input in ipairs({ list, text, "", false }) do
+      if not same(Ammo.ParseLoad(input), ref_parse(input)) then bad[#bad + 1] = "parse " .. i end
+      if Ammo.LoadString(input) ~= ref_string(input) then bad[#bad + 1] = "string " .. i end
+    end
+    if not same(Ammo.FilterLoad(info, ref_parse(list)), ref_filter(info, ref_parse(list))) then bad[#bad + 1] = "filter " .. i end
+    if not same(Ammo.FilterLoad(info, list), ref_filter(info, list)) then bad[#bad + 1] = "filter raw " .. i end
+  end
+  T("ParseLoad, LoadString and FilterLoad give what the plain versions give", #bad == 0, table.concat(bad, ", "):sub(1, 200))
+end
+
+-- The weapon's slot after SyncGunSlot shows the gun: clip, loaded magazine,
+-- bullets; for a rifle and for akimbo, whatever changes in between.
+for _, akimbo in ipairs({ false, true }) do
+  PDTI.Reset(); Ammo.Reset(); Ammo.OnHeistStart(); PDTI.SetSessionOnly(true)
+  local unit = ENV.make_unit()
+  local wep = ENV.make_weapon(akimbo and "test_akimbo_smg" or "test_ar", { "wpn_no_part" }, akimbo and 40 or 30)
+  function wep:selection_index() return 2 end
+  unit:set_weapon(wep); Ammo.EnsureSupply(wep)
+  local key = Ammo.Identify(wep).key
+  local function item() return PDTI.GetContainerInfo("gun_primary").items[1] end
+  local function check(label)
+    Ammo.SyncGunSlot(wep)
+    local it = item()
+    local rounds = wep:get_ammo_remaining_in_clip() - Ammo.ChamberOf(wep)
+    local spec = Ammo.LoadedSpec(wep)
+    local ok = it ~= nil and it.data.in_gun == true and it.data.rounds == (akimbo and Ammo.AkimboPair(wep)[1] or rounds)
+    if it and not akimbo then
+      ok = ok and it.data.rounds == rounds and it.data.bullet == spec.bullet
+        and (it.data.load or "") == (rounds > 0 and Ammo.LoadString(spec.load) or "")
+    end
+    T((akimbo and "akimbo: " or "rifle: ") .. "the slot follows the gun: " .. label, ok,
+      it and (tostring(it.data.rounds) .. "/" .. tostring(rounds) .. " " .. tostring(it.data.load)))
+  end
+  check("start")
+  Ammo.SetLoaded(wep, { size = "standard", bullet = "ap" }, akimbo and { size = "standard", bullet = "hollow" } or nil)
+  wep.clip = akimbo and 30 or 20; wep._pdti_pair = akimbo and { 15, 15 } or nil
+  Ammo.ApplyLoaded(wep)
+  check("another magazine, fewer rounds")
+  wep.clip = akimbo and 21 or 7; wep._pdti_pair = akimbo and { 10, 11 } or nil
+  check("shots fired")
+  Ammo.SetLoaded(wep, { size = "extended", bullet = "hollow" }, akimbo and { size = "compact", bullet = "ap" } or nil)
+  check("loaded magazine changed")
+  Ammo.settings.enabled = false
+  wep.clip = akimbo and 11 or 3
+  Ammo.SyncGunSlot(wep)
+  Ammo.settings.enabled = true
+  check("after the mod was switched off and on")
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -87,7 +87,7 @@ local m1 = mags(key)[1]
 T("each magazine is one gun's (a 17-round pistol magazine: one slot)",
   PDTI.ItemSize(PDTI.FindItem(m1.container, m1.instance_id)) == 1)
 T("both guns are loaded", pair(wep) == "17,17", pair(wep))
-T("the maximum counts two magazines in the guns", Ammo.MaxTotal(wep) == math.floor((34 + 4 * 17) * 1.25), Ammo.MaxTotal(wep))
+T("the maximum counts two magazines in the guns", Ammo.MaxTotal(wep) == 34 + 4 * 17, Ammo.MaxTotal(wep))
 T("a single gun of the same type is not akimbo", Ammo.IsAkimbo(ENV.make_weapon("test_pistol", { "wpn_no_part" }, 17)) == false)
 
 wep.clip = 29
@@ -141,8 +141,9 @@ T("250% speed from the first tap", near(st._state_data.reload_expire_t, 10 + 2 /
 T("a fourth tap does nothing", Ammo.TryFastReload(st, 10.7, wep, st.check) == false)
 NewRaycastWeaponBase.on_reload(wep)
 T("both guns get a full magazine", pair(wep) == "17,17" and wep.clip == 34, pair(wep))
-T("both old magazines are gone", rounds_list(key) == "17,17", rounds_list(key))
-T("their rounds are gone too", Ammo.LooseOfKey(key) == loose_before)
+-- None fell to the floor (no "Drop My Mag" here): both are kept.
+T("both old magazines could not fall: they are kept", rounds_list(key) == "2,5,17,17", rounds_list(key))
+T("their rounds stay in them (not loose)", Ammo.LooseOfKey(key) == loose_before)
 
 -- The third tap too late: the one-magazine reload goes on.
 wep, key = fresh()
@@ -218,6 +219,37 @@ wep.clip = 20
 local rows = Ammo.HudRows()
 T("the HUD shows a box for each gun", rows and rows.akimbo and rows.akimbo[1].rounds == 9 and rows.akimbo[2].rounds == 11)
 T("with the magazine capacity", rows and rows.capacity == 17)
+
+-- 0.27.4: ForEachWeapon reuses scratch lists. Primary (selection 2) first,
+-- a broken unit's error still reaches the caller, and the lists are
+-- cleaned up after it (the next call sees only its own weapons).
+do
+  local unit = ENV.make_unit()
+  local inv = unit:inventory()
+  local first = ENV.make_weapon("test_akimbo", { "wpn_no_part" }, 34)
+  local second = ENV.make_weapon("test_akimbo", { "wpn_no_part" }, 34)
+  local function sel(w) return { unit = { base = function() return w end } } end
+  inv.available_selections = function() return { [1] = sel(second), [2] = sel(first) } end
+  local seen = {}
+  Ammo.ForEachWeapon(function(w) seen[#seen + 1] = w end)
+  T("ForEachWeapon: the primary comes first", seen[1] == first and seen[2] == second, #seen)
+
+  inv.available_selections = function()
+    return { [1] = sel(second), [2] = { unit = { base = function() error("broken unit") end } } }
+  end
+  local ok, err = pcall(Ammo.ForEachWeapon, function() end)
+  T("ForEachWeapon: a broken unit's error reaches the caller", not ok and tostring(err):find("broken unit") ~= nil, err)
+
+  inv.available_selections = function() return { [1] = sel(second) } end
+  seen = {}
+  local nested = 0
+  Ammo.ForEachWeapon(function(w)
+    seen[#seen + 1] = w
+    Ammo.ForEachWeapon(function() nested = nested + 1 end)
+  end)
+  T("ForEachWeapon: after an error only this call's weapons are visited", #seen == 1 and seen[1] == second, #seen)
+  T("ForEachWeapon: a nested call still works", nested == 1, nested)
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

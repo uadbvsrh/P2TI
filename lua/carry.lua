@@ -42,10 +42,7 @@ if Carry.enabled == nil then Carry.enabled = true end
 
 local hooks = {}
 
-local function log(message)
-    local line = "[PDTI CARRY] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI CARRY")
 
 ------------------------------------------------------------------ the parts
 
@@ -107,14 +104,26 @@ end
 function Carry.LootFactor()
     if has_upgrade("carry", "movement_penalty_nullifier") then return 1 end
     local light, penalty = 0, 0
+    local LQ = PDTI.LootQuality
     for _, entry in ipairs(PDTI.FindItems(function(_, item) return item.item_id == "loot_bag" end)) do
         local data = type(entry.item.data) == "table" and entry.item.data or {}
         local amount = tonumber(entry.item.amount) or 1
         local speed = Carry.BagSpeed(data.carry_id)
-        if speed >= 1 then
-            light = light + amount
-        else
-            penalty = penalty + (1 - speed) * amount
+        -- A "light" bag (its quality) costs only part of its slowdown; each
+        -- bag of a stack counts with its own roll.
+        local rolls = LQ and LQ.Enabled() and LQ.StackRolls and LQ.InfoOf(data) and LQ.StackRolls(data, amount) or nil
+        for i = 1, amount do
+            local info = rolls and rolls[i]
+            local is_light = false
+            if info then
+                for _, m in ipairs(info.mods or {}) do if m == "light" then is_light = true end end
+            end
+            local share = is_light and LQ.LIGHT_SHARE or 1
+            if speed >= 1 then
+                light = light + share
+            else
+                penalty = penalty + (1 - speed) * share
+            end
         end
     end
     penalty = penalty + Carry.LIGHT_BAG_PENALTY * math.max(0, light - 1)
@@ -130,12 +139,22 @@ local function gear(fn, default)
     return default
 end
 
+-- A share of the load's slowdown taken away (Combat Doctor's "second wind"
+-- after a doctor bag healed a leg). Skills set Carry.relief to a function.
+function Carry.LoadRelief()
+    local f = Carry.relief
+    if type(f) ~= "function" then return 0 end
+    local ok, v = pcall(f)
+    if ok and type(v) == "number" then return math.max(0, math.min(1, v)) end
+    return 0
+end
+
 function Carry.GetBreakdown()
     local weight = Carry.LoadWeight()
     local scale = gear("PenaltyScale", 1)
     local parts = {
         load_weight = weight,
-        load = 1 - (1 - Carry.LoadFactor(weight)) * scale,
+        load = 1 - (1 - Carry.LoadFactor(weight)) * scale * (1 - Carry.LoadRelief()),
         armour = Carry.ArmourFactor(),
         loot = 1 - (1 - Carry.LootFactor()) * scale,
         gear = 1 + gear("SpeedBonus", 0),
@@ -158,11 +177,7 @@ end
 Carry.CACHE_TIME = 0.5
 local cache = { value = nil, revision = nil, t = nil }
 
-local function clock()
-    local ok, t = pcall(function() return Application:time() end)
-    if ok and type(t) == "number" then return t end
-    return os.clock()
-end
+local clock = PDTI.AppTime
 
 function Carry.InvalidateCache()
     cache.value = nil
@@ -185,53 +200,52 @@ end
 ------------------------------------------------------------------ the hooks
 
 local function wrap(class_name, fn_name, make)
-    local cls = rawget(_G, class_name)
-    local current = cls and cls[fn_name]
-    if type(current) ~= "function" then return false end
-    local key = class_name .. "." .. fn_name
-    if hooks[key] == current then return true end
-    if PDTI.HookHas(current, "carry") then return true end
-    local hook = make(current)
-    PDTI.HookMark(hook, current, "carry")
-    hooks[key] = hook
-    cls[fn_name] = hook
-    return true
+    return PDTI.Wrap(hooks, "carry", class_name, fn_name, make)
 end
 
+local function player_unit_of(pm) return pm:player_unit() end
 local function in_heist(pm)
-    local ok, unit = pcall(function() return pm:player_unit() end)
+    local ok, unit = pcall(player_unit_of, pm)
     return ok and unit ~= nil
 end
 
+-- The speed with the game's armour slowdown taken out and ours put in.
+-- The game asks for the speed several times a frame: no closures.
+local function speed_with_load(self, result)
+    local r = result
+    -- The game's armour slowdown is taken out; the armour slot
+    -- applies the same value below.
+    local armour = self:mod_movement_penalty(self:body_armor_value("movement", nil, 1))
+    if armour < 1 then r = r + (1 - armour) end
+    return r * Carry.GetSpeedFactor()
+end
+
+local function make_speed(orig)
+    return function(self, speed_state, bonus_multiplier, upgrade_level, health_ratio)
+        local result = orig(self, speed_state, bonus_multiplier, upgrade_level, health_ratio)
+        -- The menu's armour preview passes a level: it stays the game's.
+        if not Carry.enabled or upgrade_level ~= nil or not in_heist(self) then return result end
+        local ok, value = pcall(speed_with_load, self, result)
+        if ok and type(value) == "number" then return value end
+        return result
+    end
+end
+
+-- The game slows you for the bag in your hands; for loot that is part of
+-- the loot factor now.
+local function make_carry_speed(orig)
+    return function(self, ...)
+        local loot = Carry.enabled and PDTI.Loot and PDTI.Loot.CarriedId and PDTI.Loot.CarriedId()
+        if loot and PlayerCarry.super and PlayerCarry.super._get_max_walk_speed then
+            return PlayerCarry.super._get_max_walk_speed(self, ...)
+        end
+        return orig(self, ...)
+    end
+end
+
 function Carry.InstallHooks()
-    local speed = wrap("PlayerManager", "movement_speed_multiplier", function(orig)
-        return function(self, speed_state, bonus_multiplier, upgrade_level, health_ratio)
-            local result = orig(self, speed_state, bonus_multiplier, upgrade_level, health_ratio)
-            -- The menu's armour preview passes a level: it stays the game's.
-            if not Carry.enabled or upgrade_level ~= nil or not in_heist(self) then return result end
-            local ok, value = pcall(function()
-                local r = result
-                -- The game's armour slowdown is taken out; the armour slot
-                -- applies the same value below.
-                local armour = self:mod_movement_penalty(self:body_armor_value("movement", nil, 1))
-                if armour < 1 then r = r + (1 - armour) end
-                return r * Carry.GetSpeedFactor()
-            end)
-            if ok and type(value) == "number" then return value end
-            return result
-        end
-    end)
-    -- The game slows you for the bag in your hands; for loot that is part of
-    -- the loot factor now.
-    local carry = wrap("PlayerCarry", "_get_max_walk_speed", function(orig)
-        return function(self, ...)
-            local loot = Carry.enabled and PDTI.Loot and PDTI.Loot.CarriedId and PDTI.Loot.CarriedId()
-            if loot and PlayerCarry.super and PlayerCarry.super._get_max_walk_speed then
-                return PlayerCarry.super._get_max_walk_speed(self, ...)
-            end
-            return orig(self, ...)
-        end
-    end)
+    local speed = wrap("PlayerManager", "movement_speed_multiplier", make_speed)
+    local carry = wrap("PlayerCarry", "_get_max_walk_speed", make_carry_speed)
     if speed and not hooks._logged then
         hooks._logged = true
         log(string.format("movement penalty installed (free %d kg, slow at %d kg; loot and armour apply)",

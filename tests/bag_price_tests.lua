@@ -112,7 +112,7 @@ do
     #new .. " of " .. limit)
   T("the bag gives no loose rounds", Ammo.LooseOfKey(info.key) == 7, Ammo.LooseOfKey(info.key))
   local given = 20 + 45 + 15 + 20 * #new
-  T("the bag is used by what it gave", near(used, given / wep:get_ammo_max()), used)
+  T("the bag is used by what it gave", near(used, given / Ammo.BaseTotal(wep)), used)
   T("a full stock needs no bag", Ammo.BagWanted(wep) == false)
   local again = RaycastWeaponBase.add_ammo_from_bag(wep, 4)
   T("and takes nothing from it", again == 0, again)
@@ -121,7 +121,7 @@ end
 do -- A bag that is nearly empty: what it has, no magazine out of nothing.
   local wep, info = rifle()
   Ammo.AddMagazineKey(info.key, 0, info, nil, { size = "standard", bullet = "ap" })
-  local share = 15 / wep:get_ammo_max() -- 15 rounds left in the bag
+  local share = 15 / Ammo.BaseTotal(wep) -- 15 rounds left in the bag
   local used = RaycastWeaponBase.add_ammo_from_bag(wep, share)
   local m = mags(info.key)
   T("a nearly empty bag fills what it can", m[1].rounds == 15 and near(used, share), m[1].rounds)

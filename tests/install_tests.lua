@@ -71,7 +71,7 @@ local key = Ammo.Identify(wep).key
 T("the supply exists", Ammo.MagCount(key) == 3, Ammo.MagCount(key))
 
 -- A pickup becomes loose ammunition in the inventory. The game's maximum is
--- raised by the mod (the magazines plus the ammo_max setting).
+-- raised by the mod (the magazines in the gun and carried, or what you carry when that is more).
 wep:set_ammo_max(Ammo.MaxTotal(wep))
 local picked, amount = _G.RaycastWeaponBase.add_ammo(wep, 1, 40)
 T("the pickup is accepted", picked == true and amount == 40, tostring(amount))

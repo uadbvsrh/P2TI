@@ -5,34 +5,49 @@
 -- the primary and the secondary. Every heist starts with exactly that,
 -- because nothing is written to the save during a heist.
 --
--- The magazines of the menu are not tied to a weapon yet. They carry
--- data.plan_slot ("primary" or "secondary"). The first time a weapon is used
--- in a heist, they become that weapon's magazines (Plan.Bind).
+-- The magazines and loose rounds of the menu are a weapon's: data.plan_weapon
+-- (the weapon id; older plans had data.plan_slot and the id in data.pid).
+-- Changing the weapon in a slot changes none of them. The first time a
+-- weapon is used in a heist, its kind's become real (Plan.Bind). The
+-- magazine loaded in a weapon goes with the weapon (Plan.SyncGunSlots).
 local PDTI = rawget(_G, "PDTI")
 if not PDTI then return end
 
 local Plan = PDTI.Plan or {}
 PDTI.Plan = Plan
 
-local function log(message)
-    local line = "[PDTI PLAN] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI PLAN")
 
 Plan.SLOTS = { "primary", "secondary" }
 Plan.SLOT_TAGS = { primary = "PRI", secondary = "SEC" }
 -- Items you can bring: the deployables (the items with an effect), these
 -- first, then any other in name order.
-Plan.FIRST_ITEMS = { "first_aid_kit", "doctor_bag", "ammo_bag", "bodybags_bag" }
+Plan.FIRST_ITEMS = { "first_aid_kit", "doctor_bag", "ammo_bag", "bodybags_bag", "armor_kit" }
+
+-- A deployable the game does not have (an older game, or a mod's item for a
+-- deployable that is not installed) is not offered.
+local function game_has(def)
+    if not def.deployable_id then return true end
+    local equipments = rawget(_G, "tweak_data") and tweak_data.equipments
+    if type(equipments) ~= "table" then return true end
+    return equipments[def.deployable_id] ~= nil
+end
+Plan.GameHas = game_has
+
 function Plan.Items()
     local list, seen = {}, {}
     for _, id in ipairs(Plan.FIRST_ITEMS) do
         local def = PDTI.items[id]
-        if def and def.deployable and not def.no_supply then list[#list + 1] = id; seen[id] = true end
+        if def and (def.deployable or def.plan_item) and not def.no_supply and game_has(def) then
+            list[#list + 1] = id; seen[id] = true
+        end
     end
     local rest = {}
     for id, def in pairs(PDTI.items) do
-        if not seen[id] and def.deployable and not def.ammo_managed and not def.no_supply then rest[#rest + 1] = id end
+        if not seen[id] and (def.deployable or def.plan_item) and not def.ammo_managed and not def.no_supply
+            and game_has(def) then
+            rest[#rest + 1] = id
+        end
     end
     table.sort(rest)
     for _, id in ipairs(rest) do list[#list + 1] = id end
@@ -71,10 +86,6 @@ local function load_cache()
     return cache
 end
 
-function Plan.ResetCache()
-    cache = nil
-end
-
 local function blueprint_key(weapon_id, blueprint)
     local parts = {}
     for _, part in ipairs(type(blueprint) == "table" and blueprint or {}) do parts[#parts + 1] = tostring(part) end
@@ -108,8 +119,34 @@ end
 
 ------------------------------------------------------- the menu's weapons
 
--- The weapon of a slot as the menu has it: weapon id and blueprint.
+-- The weapon of a slot as the menu has it: weapon id and blueprint (and,
+-- with your weapons as grid items, the hand item's data). With grid weapons
+-- an empty slot has none.
+local function hand_cat(slot)
+    return slot == "primary" and "primaries" or "secondaries"
+end
+
+local function armory_on()
+    local A = PDTI.Armory
+    return A ~= nil and A.InUse ~= nil and A.InUse() == true
+end
+
+-- The hand item of a slot: { container, item } (nil without grid weapons).
+local function hand_entry(slot)
+    if not armory_on() then return nil end
+    local A = PDTI.Armory
+    local item = A.HandItem(hand_cat(slot))
+    if not item then return nil end
+    return { container = A.HANDS[hand_cat(slot)], item = item }
+end
+
 function Plan.MenuWeapon(slot)
+    if armory_on() then
+        local hand = hand_entry(slot)
+        local d = hand and hand.item.data
+        if type(d) ~= "table" or not d.weapon_id then return nil end
+        return d.weapon_id, PDTI.Armory.SplitBlueprint(d.blueprint), d
+    end
     local ok, weapon = pcall(function()
         local bm = managers.blackmarket
         if slot == "primary" then return bm:equipped_primary() end
@@ -127,10 +164,9 @@ local function weapon_name(weapon_id, tweak)
     return tostring(weapon_id)
 end
 
--- What the plan needs to know about the weapon of a slot: magazine size,
--- weapon type, akimbo, loaded round by round. Nil without a weapon.
-function Plan.Info(slot)
-    local weapon_id, blueprint = Plan.MenuWeapon(slot)
+-- What the plan needs to know about a weapon: magazine size, weapon type,
+-- akimbo, loaded round by round. slot: the slot it is in (or nil).
+function Plan.InfoFor(weapon_id, blueprint, slot)
     if not weapon_id then return nil end
     local tweak = tweak_data and tweak_data.weapon and tweak_data.weapon[weapon_id] or {}
     local has = {}
@@ -157,8 +193,26 @@ function Plan.Info(slot)
         info.capacity = info.akimbo and math.max(1, math.floor(full / 2)) or full
         info.loose_fed = false
         info.typed = true
+        info.sized = true
+        info.family = "rifle"
         info.exact = true
         return info
+    end
+    -- Shotguns: the rounds are shells of the game's ammunition types (the
+    -- ones the gun takes); the magazines keep the game's sizes.
+    if class == "shotgun" then
+        info.typed = true
+        info.family = "shell"
+        info.shell = true
+        local ok, fid = pcall(function()
+            return managers.weapon_factory:get_factory_id_by_weapon_id(weapon_id)
+        end)
+        info.factory_id = ok and fid or nil
+    end
+    -- LMGs: LMG rounds; the magazines keep the game's sizes.
+    if class == "lmg" then
+        info.typed = true
+        info.family = "lmg"
     end
     local c = load_cache()
     local known = c[blueprint_key(weapon_id, blueprint)]
@@ -184,41 +238,88 @@ function Plan.Info(slot)
     return info
 end
 
+-- The weapon of a slot (nil without one). info.uid: the hand item's.
+function Plan.Info(slot)
+    local weapon_id, blueprint, hand = Plan.MenuWeapon(slot)
+    local info = Plan.InfoFor(weapon_id, blueprint, slot)
+    if info then
+        info.blueprint = blueprint
+        info.uid = hand and hand.uid or nil
+    end
+    return info
+end
+
+-- What the plan knows about a kind of weapon whose ammunition you have: the
+-- one in your hands first (its parts), else a weapon of yours of that kind,
+-- else the game's. Nil for a weapon nobody knows.
+function Plan.KindInfo(kind)
+    if kind == nil then return nil end
+    for _, slot in ipairs(Plan.SLOTS) do
+        local weapon_id, blueprint = Plan.MenuWeapon(slot)
+        if weapon_id == kind then return Plan.InfoFor(kind, blueprint, slot) end
+    end
+    local _, item = PDTI.FindFirstItem(function(_, it)
+        return it.item_id == "weapon" and type(it.data) == "table" and it.data.weapon_id == kind
+    end)
+    if item and PDTI.Armory then return Plan.InfoFor(kind, PDTI.Armory.SplitBlueprint(item.data.blueprint), nil) end
+    local known = tweak_data and tweak_data.weapon and tweak_data.weapon[kind]
+    if known or type(load_cache()[tostring(kind)]) == "table" then return Plan.InfoFor(kind, nil, nil) end
+    return nil
+end
+
+function Plan.WeaponTag(weapon_id)
+    local Ammo = PDTI.Ammo
+    return Ammo and Ammo.WeaponTag and Ammo.WeaponTag(weapon_id) or tostring(weapon_id)
+end
+
 -- A magazine of the plan, full. An assault rifle's or SMG's has the size
 -- and bullets of spec ({ size, bullet }).
 local function mag_data(info, spec)
+    local tag = Plan.WeaponTag(info.weapon_id)
     local data = {
-        plan_slot = info.slot, slot = info.slot, queue_key = "plan:" .. info.slot,
+        plan_weapon = info.weapon_id, queue_key = "plan:" .. tostring(info.weapon_id), wtag = tag,
         rounds = info.capacity, capacity = info.capacity,
         mag_class = info.mag_class, akimbo = info.akimbo or nil,
-        caliber = Plan.SLOT_TAGS[info.slot], pid = info.weapon_id
+        caliber = tag, pid = info.weapon_id
     }
     if info.typed then
         -- The rounds it holds: the load given (top first), the rounds given,
-        -- or full of the given bullets.
+        -- or full of the given bullets. Shotgun magazines have no size.
         local Ammo = PDTI.Ammo
-        data.size = Ammo.SizeId(spec and spec.size)
-        data.capacity = Ammo.SpecCapacity(info.capacity, data.size)
+        data.family = info.family
+        if info.sized then
+            data.size = Ammo.SizeId(spec and spec.size)
+            data.capacity = Ammo.SpecCapacity(info.capacity, data.size)
+        end
+        local fill = Ammo.SafeBullet(info, spec and spec.bullet)
         local load
         if spec and spec.load ~= nil then
-            load = Ammo.ParseLoad(spec.load)
-            Ammo.FitLoad(load, math.min(Ammo.LoadTotal(load), data.capacity), spec.bullet)
+            load = Ammo.FilterLoad(info, Ammo.ParseLoad(spec.load))
+            Ammo.FitLoad(load, math.min(Ammo.LoadTotal(load), data.capacity), fill)
         else
             local rounds = spec and tonumber(spec.rounds) or data.capacity
-            load = Ammo.FitLoad({}, math.min(math.max(0, rounds), data.capacity), spec and spec.bullet)
+            load = Ammo.FitLoad({}, math.min(math.max(0, rounds), data.capacity), fill)
         end
         data.rounds = Ammo.LoadTotal(load)
-        data.bullet = Ammo.LoadTop(load) or Ammo.BulletId(spec and spec.bullet)
+        data.bullet = Ammo.LoadTop(load) or fill
         if data.rounds > 0 then data.load = Ammo.LoadString(load) end
     end
     return data
 end
 
+-- The rounds of a magazine of the plan: AR/SMG magazines by size.
+local function spec_cap(info, size)
+    if info.sized then return PDTI.Ammo.SpecCapacity(info.capacity, size) end
+    return info.capacity
+end
+
 local function loose_data(info, bullet)
+    local tag = Plan.WeaponTag(info.weapon_id)
     return {
-        plan_slot = info.slot, slot = info.slot, queue_key = "plan:" .. info.slot,
-        mag_class = info.mag_class, caliber = Plan.SLOT_TAGS[info.slot], pid = info.weapon_id,
-        bullet = info.typed and PDTI.Ammo.BulletId(bullet) or nil
+        plan_weapon = info.weapon_id, queue_key = "plan:" .. tostring(info.weapon_id), wtag = tag,
+        mag_class = info.mag_class, caliber = tag, pid = info.weapon_id,
+        bullet = info.typed and PDTI.Ammo.SafeBullet(info, bullet) or nil,
+        family = info.family
     }
 end
 
@@ -228,10 +329,12 @@ function Plan.PickSpec(slot)
     local Ammo = PDTI.Ammo
     local p = PDTI.GetPlanSlot(slot)
     local info = Plan.Info(slot)
-    local cap = Ammo.SpecCapacity(info and info.capacity or 30, p.pick_size)
+    local cap = info and spec_cap(info, p.pick_size) or Ammo.SpecCapacity(30, p.pick_size)
+    -- A plan made for another gun: bullets this one cannot use are standard.
+    local pick_bullet = info and Ammo.SafeBullet(info, p.pick_bullet) or Ammo.BulletId(p.pick_bullet)
     local load
     if p.pick_load ~= nil then
-        load = Ammo.ParseLoad(p.pick_load)
+        load = info and Ammo.FilterLoad(info, Ammo.ParseLoad(p.pick_load)) or Ammo.ParseLoad(p.pick_load)
         -- A smaller magazine: the bottom rounds do not fit.
         local over = Ammo.LoadTotal(load) - cap
         while over > 0 and load[#load] do
@@ -241,10 +344,10 @@ function Plan.PickSpec(slot)
             if load[#load][2] <= 0 then table.remove(load) end
         end
     else
-        load = { { p.pick_bullet, cap } }
+        load = { { pick_bullet, cap } }
     end
-    return { size = p.pick_size, bullet = Ammo.LoadTop(load) or p.pick_bullet, load = load,
-        rounds = Ammo.LoadTotal(load), capacity = cap }
+    return { size = (not info or info.sized) and p.pick_size or nil, bullet = Ammo.LoadTop(load) or pick_bullet,
+        load = load, rounds = Ammo.LoadTotal(load), capacity = cap }
 end
 
 -- The rounds of a bullet in the magazine "+ mag" adds.
@@ -269,6 +372,8 @@ function Plan.SetPickCount(slot, bullet, n)
     if PDTI.InHeist and PDTI.InHeist() then return false, "What you bring is chosen in the menu" end
     local Ammo = PDTI.Ammo
     if not Ammo.BULLETS[bullet] then return false, "unknown bullets" end
+    local info = Plan.Info(slot)
+    if info and not Ammo.BulletAllowed(info, bullet) then return false, "these rounds do not fit this weapon" end
     local spec = Plan.PickSpec(slot)
     local others, list, at = 0, {}, nil
     for _, part in ipairs(spec.load) do
@@ -299,6 +404,19 @@ function Plan.ChangePickCount(slot, bullet, add)
     return Plan.SetPickCount(slot, bullet, now - (now % step == 0 and step or now % step))
 end
 
+-- Ctrl+click on "+": the rest of the magazine is this bullet.
+function Plan.FillPick(slot, bullet)
+    local spec = Plan.PickSpec(slot)
+    if spec.rounds >= spec.capacity then return false, "the magazine is full" end
+    return Plan.SetPickCount(slot, bullet, spec.capacity)
+end
+
+-- Ctrl+click on "-": none of this bullet.
+function Plan.ClearPick(slot, bullet)
+    if Plan.PickCount(slot, bullet) <= 0 then return false, "none of these in it" end
+    return Plan.SetPickCount(slot, bullet, 0)
+end
+
 -- Turns the magazine's load upside down (the bottom rounds are fired first).
 function Plan.FlipPick(slot)
     if PDTI.InHeist and PDTI.InHeist() then return false, "What you bring is chosen in the menu" end
@@ -311,7 +429,9 @@ end
 -- The magazine in the gun when its slot is empty (older plans).
 function Plan.GunSpec(slot)
     local p = PDTI.GetPlanSlot(slot)
-    return { size = p.gun_size, bullet = p.gun_bullet }
+    local info = Plan.Info(slot)
+    local bullet = info and info.typed and PDTI.Ammo.SafeBullet(info, p.gun_bullet) or p.gun_bullet
+    return { size = (not info or info.sized) and p.gun_size or nil, bullet = bullet }
 end
 
 -- Choose a size or bullets ("gun_size", "pick_bullet", ...). Only in the menu.
@@ -320,6 +440,10 @@ function Plan.SetSpec(slot, field, value)
     local Ammo = PDTI.Ammo
     if field:match("_size$") and not Ammo.MAG_SIZES[value] then return false, "unknown size" end
     if field:match("_bullet$") and not Ammo.BULLETS[value] then return false, "unknown bullets" end
+    if field:match("_bullet$") then
+        local info = Plan.Info(slot)
+        if info and not Ammo.BulletAllowed(info, value) then return false, "these rounds do not fit this weapon" end
+    end
     local ok = PDTI.SetPlanSlot(slot, field, value)
     if ok and field == "pick_size" and PDTI.GetPlanSlot(slot).pick_load then
         -- Keep what still fits.
@@ -331,39 +455,64 @@ end
 
 ------------------------------------------------------------- the plan
 
-local function plan_items(item_id, slot)
+-- The weapon a piece of the plan's ammunition is for: its weapon id.
+local function kind_of(data)
+    if type(data) ~= "table" then return nil end
+    if data.plan_weapon ~= nil then return data.plan_weapon end
+    if data.plan_slot ~= nil then return data.pid end
+    return nil
+end
+Plan.KindOf = kind_of
+
+-- The kind of the weapon in a slot (the slot's rows act on it).
+local function slot_kind(slot)
+    return (Plan.MenuWeapon(slot))
+end
+
+local function plan_items(item_id, kind)
+    if kind == nil then return {} end
     return PDTI.FindItems(function(_, item)
-        return item.item_id == item_id and type(item.data) == "table" and item.data.plan_slot == slot
+        return item.item_id == item_id and kind_of(item.data) == kind
     end)
 end
 
--- The magazines you carry (not the one in the weapon's slot).
+-- The magazines you carry for the slot's weapon (not the one in it).
 function Plan.Magazines(slot)
     local out = {}
-    for _, entry in ipairs(plan_items(PDTI.Ammo.MAGAZINE_ITEM, slot)) do
+    for _, entry in ipairs(plan_items(PDTI.Ammo.MAGAZINE_ITEM, slot_kind(slot))) do
         if not PDTI.IsGunSlot(entry.container) then out[#out + 1] = entry end
     end
     return out
 end
 
--- The magazine in the weapon's slot: the heist starts with it in the gun
+-- The magazine in the slot's weapon: the heist starts with it in the gun
 -- (akimbo: up to two).
 function Plan.GunMagazines(slot)
+    local c = PDTI.Ammo.GUN_SLOTS[slot]
+    return PDTI.FindItems(function(name, item)
+        return name == c and item.item_id == PDTI.Ammo.MAGAZINE_ITEM
+    end)
+end
+
+-- Every magazine of the plan for a kind of weapon.
+local function all_magazines(kind)
+    return plan_items(PDTI.Ammo.MAGAZINE_ITEM, kind)
+end
+
+-- Loose stacks of a kind of weapon (of one bullet, or all).
+local function loose_stacks(kind, bullet)
+    local list = plan_items(PDTI.Ammo.LOOSE_ITEM, kind)
+    if not bullet then return list end
     local out = {}
-    for _, entry in ipairs(plan_items(PDTI.Ammo.MAGAZINE_ITEM, slot)) do
-        if PDTI.IsGunSlot(entry.container) then out[#out + 1] = entry end
+    for _, entry in ipairs(list) do
+        if PDTI.Ammo.BulletId(entry.item.data.bullet) == bullet then out[#out + 1] = entry end
     end
     return out
 end
 
--- Every magazine of the plan for a slot.
-local function all_magazines(slot)
-    return plan_items(PDTI.Ammo.MAGAZINE_ITEM, slot)
-end
-
--- Loose stacks of a slot (of one bullet, or all).
+-- Loose stacks for the slot's weapon (of one bullet, or all).
 function Plan.LooseStacks(slot, bullet)
-    local list = plan_items(PDTI.Ammo.LOOSE_ITEM, slot)
+    local list = plan_items(PDTI.Ammo.LOOSE_ITEM, slot_kind(slot))
     if not bullet then return list end
     local out = {}
     for _, entry in ipairs(list) do
@@ -416,7 +565,7 @@ end
 local function add_loose(info, rounds, bullet)
     rounds = math.max(0, math.floor(rounds))
     local data = loose_data(info, bullet)
-    for _, entry in ipairs(Plan.LooseStacks(info.slot, data.bullet)) do
+    for _, entry in ipairs(loose_stacks(info.weapon_id, data.bullet)) do
         if rounds <= 0 then return true end
         local amount = tonumber(entry.item.amount) or 0
         local room = Plan.MAX_LOOSE - amount
@@ -494,7 +643,7 @@ function Plan.AddPrice(kind)
     local info = Plan.Info(arg)
     if not info then return 0 end
     if what == "mag" then return Ammo.MagazinePrice(mag_data(info, Plan.PickSpec(arg))) end
-    return Plan.LooseStep(info) * Ammo.RoundPrice(info.typed and bullet or "standard")
+    return Plan.LooseStep(info) * Ammo.RoundPrice(info.typed and Ammo.SafeBullet(info, bullet) or "standard")
 end
 
 -- Takes money from the spending cash. Returns what was taken.
@@ -612,8 +761,7 @@ end
 function Plan.PayRestock(force)
     local r = Plan.restock
     if not r or r.owed < 1 then return 0 end
-    local now = os.clock()
-    pcall(function() now = Application:time() end)
+    local now = PDTI.AppTime()
     if not force and r.last_pay and now - r.last_pay < Plan.RESTOCK_EVERY then return 0 end
     r.last_pay = now
     local amount = math.floor(r.owed)
@@ -625,7 +773,9 @@ end
 
 local function bullet_of(base)
     local Ammo = PDTI.Ammo
-    local ok, typed = pcall(function() return Ammo.TypedBase and Ammo.TypedBase(base) end)
+    local ok, typed = pcall(function()
+        return (Ammo.TypedBase and Ammo.TypedBase(base)) or (Ammo.ShellBase and Ammo.ShellBase(base))
+    end)
     if ok and typed then return Ammo.FiredBullet(typed) or "standard" end
     return "standard"
 end
@@ -708,6 +858,9 @@ function Plan.Add(kind)
         if info.loose_fed then return false, info.name .. " is loaded round by round: bring loose rounds" end
         ok, reason = add_auto(PDTI.Ammo.MAGAZINE_ITEM, 1, mag_data(info, Plan.PickSpec(arg)))
     else
+        if bullet and info.typed and not PDTI.Ammo.BulletAllowed(info, bullet) then
+            return false, "these rounds do not fit this weapon"
+        end
         ok, reason = add_loose(info, Plan.LooseStep(info), bullet)
     end
     if ok then
@@ -759,6 +912,265 @@ function Plan.Remove(kind)
     return ok, reason
 end
 
+-------------------------------------------- the magazine in the weapon
+
+-- The magazine loaded in a weapon is that weapon's. In the menu it sits in
+-- the slot's magazine box while the weapon is in the slot (data.weapon_uid:
+-- the weapon item's uid) and goes with the weapon when it leaves: the weapon
+-- item keeps it (Ammo.GunFields). Without grid weapons the box holds the
+-- magazine of the game's weapon of the slot.
+
+local function update_item(entry, fields)
+    return PDTI.EditItems({ update = { { container = entry.container,
+        instance_id = entry.item.instance_id, data = fields } } })
+end
+
+local function weapon_entry(uid)
+    if uid == nil then return nil end
+    return PDTI.FindItems(function(_, item)
+        return item.item_id == "weapon" and type(item.data) == "table" and item.data.uid == uid
+    end)[1]
+end
+
+-- A weapon's build changed (a part fitted or taken off, 0.38.0): the
+-- magazines it keeps take the size of its new build (an extended pistol
+-- magazine). Returns true when they were reshaped.
+function Plan.ReshapeStored(uid)
+    local e = weapon_entry(uid)
+    local d = e and e.item.data
+    if not d or (tonumber(d.gun_n) or 0) <= 0 then return false end
+    local A = PDTI.Armory
+    local info = Plan.InfoFor(d.weapon_id, A and A.SplitBlueprint(d.blueprint) or nil, nil)
+    if not info or info.loose_fed then return false end
+    local list = {}
+    for _, m in ipairs(PDTI.Ammo.StoredMagazines(d)) do
+        list[#list + 1] = mag_data(info, { size = m.size, bullet = m.bullet, load = m.load, rounds = m.rounds })
+    end
+    update_item(e, PDTI.Ammo.GunFields(list))
+    return true
+end
+
+-- A weapon sold (0.38.0): its loaded magazine, kept in the weapon or in its
+-- slot's box, is paid back as the Bring list pays back one taken out (never
+-- more than was paid). Returns what was paid back. (A box magazine of a
+-- weapon that is gone leaves at the next Plan.SyncGunSlots.)
+function Plan.SellMagazines(d)
+    local Ammo = PDTI.Ammo
+    if type(d) ~= "table" then return 0 end
+    local price = 0
+    local A = PDTI.Armory
+    local info = Plan.InfoFor(d.weapon_id, A and A.SplitBlueprint(d.blueprint) or nil, nil)
+    if info and not info.loose_fed then
+        for _, m in ipairs(Ammo.StoredMagazines(d)) do
+            price = price + Ammo.MagazinePrice(mag_data(info, { size = m.size, bullet = m.bullet, load = m.load, rounds = m.rounds }))
+        end
+    end
+    local uid = tonumber(d.uid) or 0
+    if uid > 0 then
+        for _, b in ipairs(PDTI.FindItems(function(name, item)
+            return PDTI.GUN_SLOTS[name] ~= nil and item.item_id == Ammo.MAGAZINE_ITEM and type(item.data) == "table"
+                and tonumber(item.data.weapon_uid) == uid
+        end)) do
+            price = price + Ammo.ItemPrice(b.item)
+        end
+    end
+    return Plan.Refund(price)
+end
+
+-- A weapon of yours of this kind, not in your hands, holding no magazine.
+local function empty_weapon(kind)
+    if kind == nil then return nil end
+    return PDTI.FindItems(function(name, item)
+        local d = item.data
+        return item.item_id == "weapon" and type(d) == "table" and d.weapon_id == kind
+            and not PDTI.HAND_SLOTS[name] and (tonumber(d.gun_n) or 0) == 0
+    end)[1]
+end
+
+-- A magazine leaving a weapon's box with no weapon to go with: into the
+-- grid (marked was_gun: it goes back into that gun), else paid back.
+local function to_grid(c, item)
+    local data = {}
+    for k, v in pairs(item.data or {}) do data[k] = v end
+    data.weapon_uid = nil
+    data.was_gun = 1
+    PDTI.RemoveItem(c, item.instance_id)
+    if add_auto(item.item_id, item.amount or 1, data) then return true end
+    Plan.Refund(PDTI.Ammo.ItemPrice(item))
+    log("a magazine had no room in the inventory and was paid back")
+    return false
+end
+
+-- Without grid weapons: the kinds of weapon whose free magazine a slot gave
+-- ("a,b"; each kind once).
+local function filled_kinds(slot)
+    local out = {}
+    for k in tostring(PDTI.GetPlanSlot(slot).gun_filled or ""):gmatch("[^,]+") do out[k] = true end
+    return out
+end
+
+local function mark_filled(slot, kind)
+    local have = filled_kinds(slot)
+    if kind == nil or have[tostring(kind)] then return end
+    local list = {}
+    for k in pairs(have) do if k ~= "1" then list[#list + 1] = k end end
+    list[#list + 1] = tostring(kind)
+    table.sort(list)
+    PDTI.SetPlanSlot(slot, "gun_filled", table.concat(list, ","))
+end
+
+-- Full magazine(s) for the slot's weapon (akimbo: two), free: a weapon
+-- comes with its magazine.
+local function fill_gun(slot, info, spec)
+    local data = mag_data(info, spec)
+    data.weapon_uid = info.uid
+    for _ = 1, info.akimbo and 2 or 1 do
+        PDTI.AddItemAuto(PDTI.Ammo.GUN_SLOTS[slot], PDTI.Ammo.MAGAZINE_ITEM, 1, data, true)
+    end
+    local hand = hand_entry(slot)
+    if hand then
+        update_item(hand, { gun_set = 1, gun_n = 0, gun_weight = 0 })
+    else
+        mark_filled(slot, info.weapon_id)
+    end
+end
+
+-- Puts each magazine where its weapon is: a weapon that left a slot took
+-- its magazine along (a weapon that is gone, thrown away or lost, took it
+-- with it); the weapon in a slot has its own back in the box (a new weapon
+-- comes with a full one, a weapon you emptied stays empty). Menu only.
+function Plan.SyncGunSlots()
+    if PDTI.InHeist and PDTI.InHeist() then return false end
+    local Ammo = PDTI.Ammo
+    local armory = armory_on()
+    local changed = false
+    -- A magazine you took out of a box is no weapon's any more.
+    for _, e in ipairs(PDTI.FindItems(function(name, it)
+        return it.item_id == Ammo.MAGAZINE_ITEM and not PDTI.IsGunSlot(name) and type(it.data) == "table"
+            and (tonumber(it.data.weapon_uid) or 0) > 0
+    end)) do
+        PDTI.EditItems({ update = { { container = e.container, instance_id = e.item.instance_id,
+            data = { weapon_uid = 0 } } } })
+    end
+    for _, slot in ipairs(Plan.SLOTS) do
+        local c = Ammo.GUN_SLOTS[slot]
+        local info = Plan.Info(slot)
+        local hand = hand_entry(slot)
+        local hd = hand and hand.item.data or nil
+        local kind = info and info.weapon_id
+        local owned, others, keep = {}, {}, 0
+        for _, it in ipairs((PDTI.GetContainerInfo(c) or { items = {} }).items) do
+            local d = type(it.data) == "table" and it.data or {}
+            local owner = tonumber(d.weapon_uid) or 0
+            if it.item_id ~= Ammo.MAGAZINE_ITEM then
+                -- (nothing else goes into a magazine box)
+            elseif hd and owner == hd.uid then
+                keep = keep + 1
+            elseif armory and owner > 0 then
+                owned[owner] = owned[owner] or {}
+                table.insert(owned[owner], it)
+            elseif kind and kind_of(d) == kind then
+                -- A magazine of this weapon put into its box: its own now.
+                keep = keep + 1
+                if hd then
+                    PDTI.EditItems({ update = { { container = c, instance_id = it.instance_id,
+                        data = { weapon_uid = hd.uid } } } })
+                end
+            else
+                local k = tostring(kind_of(d))
+                others[k] = others[k] or {}
+                table.insert(others[k], it)
+            end
+        end
+        for uid, list in pairs(owned) do
+            local w = weapon_entry(uid)
+            local mags = {}
+            for _, it in ipairs(list) do mags[#mags + 1] = it.data end
+            if w then update_item(w, Ammo.GunFields(mags)) end
+            for _, it in ipairs(list) do PDTI.RemoveItem(c, it.instance_id) end
+            changed = true
+        end
+        -- Another weapon's magazine without its weapon (an older plan, or
+        -- the game's weapon changed): into a weapon of yours of its kind
+        -- that holds none, else into the grid.
+        for k, list in pairs(others) do
+            local w = armory and empty_weapon(k) or nil
+            local room = 0
+            if w then room = (Plan.KindInfo(k) or {}).akimbo and 2 or 1 end
+            local mags = {}
+            for _, it in ipairs(list) do
+                if #mags < room then
+                    mags[#mags + 1] = it.data
+                    PDTI.RemoveItem(c, it.instance_id)
+                else
+                    to_grid(c, it)
+                end
+            end
+            if w and #mags > 0 then update_item(w, Ammo.GunFields(mags)) end
+            changed = true
+        end
+        if info and not info.loose_fed and keep == 0 then
+            if hd and hd.gun_set ~= 1 then
+                fill_gun(slot, info, Plan.GunSpec(slot))
+                changed = true
+            elseif hd and (tonumber(hd.gun_n) or 0) > 0 then
+                for _, m in ipairs(Ammo.StoredMagazines(hd)) do
+                    local data = mag_data(info, { size = m.size, bullet = m.bullet, load = m.load, rounds = m.rounds })
+                    data.weapon_uid = hd.uid
+                    PDTI.AddItemAuto(c, Ammo.MAGAZINE_ITEM, 1, data, true)
+                end
+                update_item(hand, { gun_n = 0, gun_weight = 0 })
+                changed = true
+            elseif not hd and not armory then
+                -- The game's weapon of the slot: the magazine that left its
+                -- gun goes back in; a kind new to the slot comes with one.
+                local spare = nil
+                for _, e in ipairs(Plan.Magazines(slot)) do
+                    if (tonumber(e.item.data.was_gun) or 0) == 1 then spare = e break end
+                end
+                if spare then
+                    local x, y = PDTI.FindFreeSpace(c, { item_id = spare.item.item_id, data = spare.item.data }, false)
+                    if x and PDTI.MoveItem(spare.container, spare.item.instance_id, c, x, y, false) then
+                        PDTI.EditItems({ update = { { container = c, instance_id = spare.item.instance_id,
+                            data = { was_gun = 0 } } } })
+                    end
+                    changed = true
+                elseif not filled_kinds(slot)[tostring(kind)] then
+                    fill_gun(slot, info, Plan.GunSpec(slot))
+                    changed = true
+                end
+            end
+        elseif info and keep > 0 then
+            -- Its magazine is settled (put in by hand, or an older plan's).
+            if hd and hd.gun_set ~= 1 then update_item(hand, { gun_set = 1, gun_n = 0, gun_weight = 0 })
+            elseif not hd then mark_filled(slot, kind) end
+        end
+    end
+    return changed
+end
+
+-- May this magazine go into a slot's magazine box? Only one of the weapon
+-- in that slot (inventory.lua asks).
+function PDTI.GunSlotAccepts(slot, data)
+    local Ammo = PDTI.Ammo
+    if PDTI.InHeist and PDTI.InHeist() then
+        local wep = Ammo.WeaponInSlot and Ammo.WeaponInSlot(slot)
+        if not wep then
+            -- (No player to ask: the magazine's own slot decides.)
+            if data.slot == slot then return true end
+            return false, "only a magazine of this weapon goes here"
+        end
+        local ok, info = pcall(Ammo.Identify, wep)
+        if not ok or not info then return false, "no weapon in this slot" end
+        if data.queue_key == info.key or kind_of(data) == info.weapon then return true end
+        return false, "only a magazine of this weapon goes here"
+    end
+    local kind = slot_kind(slot)
+    if not kind then return false, "no weapon in this slot" end
+    if kind_of(data) ~= kind then return false, "only a magazine of this weapon goes here" end
+    return true
+end
+
 -- How many magazines a weapon gets by default (the game's reserve, less the
 -- magazine in the gun).
 function Plan.DefaultMagazines(info)
@@ -780,11 +1192,7 @@ function Plan.Defaults()
                 add_loose(info, math.min(Plan.DEFAULT_MAX_LOOSE, info.ammo_max or (info.capacity * 4)))
             else
                 -- The magazine in the gun (one per gun), then the spares.
-                PDTI.SetPlanSlot(slot, "gun_filled", "1")
-                for _ = 1, info.akimbo and 2 or 1 do
-                    PDTI.AddItemAuto(PDTI.Ammo.GUN_SLOTS[slot], PDTI.Ammo.MAGAZINE_ITEM, 1,
-                        mag_data(info, Plan.PickSpec(slot)), true)
-                end
+                if #Plan.GunMagazines(slot) == 0 then fill_gun(slot, info, Plan.PickSpec(slot)) end
                 for _ = 1, Plan.DefaultMagazines(info) do
                     if not add_auto(PDTI.Ammo.MAGAZINE_ITEM, 1, mag_data(info, Plan.PickSpec(slot))) then break end
                 end
@@ -803,49 +1211,50 @@ local function same(a, b)
     return true
 end
 
--- In the menu: the magazines follow the weapons you have now (another gun,
--- another magazine size). A weapon loaded round by round gets the rounds of
--- its magazines as loose rounds.
+-- In the menu: each weapon's ammunition keeps the shape of its own weapon
+-- (the real magazine size, once a heist learned it). Changing the weapon in
+-- a slot changes none of it: it stays its weapon's. A weapon loaded round by
+-- round gets the rounds of its magazines as loose rounds.
 function Plan.Refresh()
     if not PDTI.IsAmmoPlanned() then
         Plan.Defaults()
+        Plan.SyncGunSlots()
         return
     end
-    for _, slot in ipairs(Plan.SLOTS) do
-        local info = Plan.Info(slot)
+    Plan.SyncGunSlots()
+    local Ammo = PDTI.Ammo
+    local kinds = {}
+    for _, entry in ipairs(PDTI.FindItems(function(_, item)
+        return (item.item_id == Ammo.MAGAZINE_ITEM or item.item_id == Ammo.LOOSE_ITEM) and kind_of(item.data) ~= nil
+    end)) do
+        kinds[kind_of(entry.item.data)] = true
+    end
+    for kind in pairs(kinds) do
+        local info = Plan.KindInfo(kind)
         if info then
             local rounds = 0
-            for _, entry in ipairs(all_magazines(slot)) do
+            for _, entry in ipairs(all_magazines(kind)) do
                 if info.loose_fed then
                     rounds = rounds + (tonumber(entry.item.data.capacity) or 0)
                     PDTI.RemoveItem(entry.container, entry.item.instance_id)
                 else
                     local old = entry.item.data
+                    local known = Ammo.HasLoad(old)
                     local want = mag_data(info, { size = old.size, bullet = old.bullet,
-                        load = old.size and old.load or nil, rounds = old.size and old.rounds or nil })
-                    if not same(want, entry.item.data) or (not info.typed and entry.item.data.size) then
+                        load = known and old.load or nil, rounds = known and old.rounds or nil })
+                    want.was_gun = old.was_gun
+                    -- (An older plan's never matches: it has no plan_weapon.)
+                    if not same(want, old) or (not info.typed and old.size) then
                         local ok = PDTI.ReplaceItemData(entry.container, entry.item.instance_id, want, Plan.ORDER)
                         if not ok then
                             PDTI.RemoveItem(entry.container, entry.item.instance_id)
-                            log(slot .. ": a magazine of the new size had no room and was left out")
+                            log(tostring(kind) .. ": a magazine of the new size had no room and was left out")
                         end
                     end
                 end
             end
             if rounds > 0 then add_loose(info, rounds) end
-            -- A plan from before the weapon's slot: its magazine goes in once,
-            -- as the gun was chosen.
-            if not info.loose_fed and PDTI.GetPlanSlot(slot).gun_filled ~= "1" then
-                if #Plan.GunMagazines(slot) == 0 then
-                    local gun = Plan.GunSpec(slot)
-                    for _ = 1, info.akimbo and 2 or 1 do
-                        PDTI.AddItemAuto(PDTI.Ammo.GUN_SLOTS[slot], PDTI.Ammo.MAGAZINE_ITEM, 1,
-                            mag_data(info, { size = gun.size, bullet = gun.bullet }), true)
-                    end
-                end
-                PDTI.SetPlanSlot(slot, "gun_filled", "1")
-            end
-            for _, entry in ipairs(Plan.LooseStacks(slot)) do
+            for _, entry in ipairs(loose_stacks(kind)) do
                 local want = loose_data(info, entry.item.data.bullet)
                 if not same(want, entry.item.data) or (not info.typed and entry.item.data.bullet) then
                     PDTI.ReplaceItemData(entry.container, entry.item.instance_id, want, Plan.ORDER)
@@ -862,19 +1271,23 @@ end
 function Plan.Bind(wep, info)
     local Ammo = PDTI.Ammo
     local slot = info and info.slot
-    if not slot then return false end
+    if not slot or PDTI.InSafehouse() then return false end
     -- A weapon is used: this is the heist, never saved (the plan stays as it
     -- was chosen).
     if not PDTI.session_only then PDTI.SetSessionOnly(true) end
     local names = Plan.ORDER
     local extra = 0
     local gun_mags = {}
-    for _, entry in ipairs(all_magazines(slot)) do
+    -- The ammunition of this kind of weapon (wherever it is).
+    local kind = wep._name_id
+    local box = Ammo.GUN_SLOTS[slot]
+    for _, entry in ipairs(all_magazines(kind)) do
         if info.loose_fed then
             extra = extra + (tonumber(entry.item.data.capacity) or 0)
             PDTI.RemoveItem(entry.container, entry.item.instance_id)
-        elseif PDTI.IsGunSlot(entry.container) then
-            -- The magazine of the weapon's slot goes into the gun.
+        elseif entry.container == box then
+            -- The magazine of the weapon's box goes into the gun. (Another
+            -- box holds another kind of weapon's.)
             gun_mags[#gun_mags + 1] = entry.item.data
             PDTI.RemoveItem(entry.container, entry.item.instance_id)
         else
@@ -889,14 +1302,20 @@ function Plan.Bind(wep, info)
             end
         end
     end
-    for _, entry in ipairs(Plan.LooseStacks(slot)) do
+    for _, entry in ipairs(loose_stacks(kind)) do
         PDTI.ReplaceItemData(entry.container, entry.item.instance_id,
             Ammo.LooseData(info.key, info, entry.item.data.bullet), names)
     end
     if extra > 0 then Ammo.AddLooseKey(info.key, extra, info) end
     -- The magazine in the gun: the size and bullets chosen for it, full.
     local in_gun = info.loose_fed and info.capacity or (info.akimbo and 2 or 1) * info.capacity
-    if info.typed then
+    if info.typed and info.loose_fed then
+        -- A shotgun tube: the shells the game put in are of the kind chosen
+        -- for the gun (buckshot unless the plan says otherwise).
+        local bullet = Ammo.SafeBullet(info, Plan.GunSpec(slot).bullet)
+        Ammo.SetLoaded(wep, { bullet = bullet })
+        Ammo.ApplyLoaded(wep)
+    elseif info.typed then
         -- Each gun: the magazine of the weapon's slot, as it was packed, or
         -- (an empty slot) a full one of the older choice.
         local specs, rounds = {}, {}
@@ -907,10 +1326,10 @@ function Plan.Bind(wep, info)
                 rounds[i] = math.max(0, math.floor(tonumber(data.rounds) or 0))
             else
                 specs[i] = Plan.GunSpec(slot)
-                rounds[i] = Ammo.SpecCapacity(info.capacity, specs[i].size)
-                specs[i].load = { { Ammo.BulletId(specs[i].bullet), rounds[i] } }
+                rounds[i] = spec_cap(info, specs[i].size)
+                specs[i].load = { { Ammo.SafeBullet(info, specs[i].bullet), rounds[i] } }
             end
-            rounds[i] = math.min(rounds[i], Ammo.SpecCapacity(info.capacity, specs[i].size))
+            rounds[i] = math.min(rounds[i], spec_cap(info, specs[i].size))
         end
         Ammo.SetLoaded(wep, specs[1], specs[2])
         local cap = Ammo.LoadedSpec(wep).capacity
@@ -934,6 +1353,12 @@ function Plan.Bind(wep, info)
     for _, mag in ipairs(Ammo.AllMagazines(info.key)) do carried = carried + mag.rounds end
     Ammo.plan_max[info.key] = in_gun + carried
     if Ammo.NoReload(wep) then wep._pdti_synced = Ammo.LooseOfKey(info.key) end
+    -- Your weapon's box was empty: what the weapon item holds (a weapon you
+    -- emptied starts without a magazine).
+    local hand = #gun_mags == 0 and hand_entry(slot) or nil
+    if hand and hand.item.data.weapon_id == kind and Ammo.LoadGun then
+        pcall(Ammo.LoadGun, wep, hand.item.data)
+    end
     Ammo.MarkPanelDirty()
     return true
 end
@@ -965,23 +1390,56 @@ function PDTI.OnUIOpen()
 end
 
 -- The rows of the menu's "Bring" list.
+-- The weapon slots by ammunition category (AR/SMG, shotgun, LMG, other),
+-- each with its category: { slot, info, category }.
+function Plan.SlotsByCategory()
+    local Ammo = PDTI.Ammo
+    local rank = {}
+    for i, c in ipairs(Ammo.CATEGORY_ORDER) do rank[c] = i end
+    local out = {}
+    for i, slot in ipairs(Plan.SLOTS) do
+        local info = Plan.Info(slot)
+        if info then
+            local cat = Ammo.AmmoCategory(info) or "other"
+            out[#out + 1] = { slot = slot, info = info, category = cat, order = (rank[cat] or 9) * 10 + i }
+        end
+    end
+    table.sort(out, function(a, b) return a.order < b.order end)
+    return out
+end
+
 function Plan.Rows()
     local rows = {}
-    for _, slot in ipairs(Plan.SLOTS) do
-        local info = Plan.Info(slot)
+    local last_cat = nil
+    for _, entry in ipairs(Plan.SlotsByCategory()) do
+        local slot, info = entry.slot, entry.info
+        -- A heading for each ammunition category.
+        if entry.category ~= last_cat then
+            last_cat = entry.category
+            rows[#rows + 1] = { kind = "cat:" .. entry.category, category = entry.category,
+                text = PDTI.Ammo.CATEGORY_NAMES[entry.category] .. " ammunition" }
+        end
         if info then
             local tag = Plan.SLOT_TAGS[slot]
             local size = (info.exact and "" or "~") .. tostring(info.capacity)
             if info.typed then
                 local Ammo = PDTI.Ammo
-                local pick = Plan.PickSpec(slot)
-                rows[#rows + 1] = { kind = "mag:" .. slot, typed = true, slot = slot,
-                    text = string.format("%s mags x%d (+%s %d %s)", tag, #Plan.Magazines(slot),
-                        Ammo.MAG_SIZES[pick.size].short, pick.rounds, Ammo.LoadTag(pick.load, pick.bullet)),
-                    pick = pick, name = info.name }
-                for _, id in ipairs(Ammo.BULLET_ORDER) do
-                    rows[#rows + 1] = { kind = "loose:" .. slot .. ":" .. id, bullet = id,
-                        text = string.format("%s %s %d", tag, Ammo.BULLETS[id].short, Plan.LooseRounds(slot, id)),
+                if info.loose_fed then
+                    -- A shotgun loaded shell by shell: only loose shells.
+                    rows[#rows + 1] = { kind = "weapon:" .. slot, header = true, slot = slot, name = info.name,
+                        text = info.name }
+                else
+                    local pick = Plan.PickSpec(slot)
+                    local size_tag = info.sized and (Ammo.MAG_SIZES[Ammo.SizeId(pick.size)].short .. " ") or ""
+                    rows[#rows + 1] = { kind = "mag:" .. slot, typed = true, slot = slot, sized = info.sized,
+                        family = info.family, bullets = Ammo.BulletsFor(info),
+                        text = string.format("%s mags x%d (+%s%d %s)", tag, #Plan.Magazines(slot),
+                            size_tag, pick.rounds, Ammo.LoadTag(pick.load, pick.bullet, info.family)),
+                        pick = pick, name = info.name }
+                end
+                for _, id in ipairs(Ammo.BulletsFor(info)) do
+                    rows[#rows + 1] = { kind = "loose:" .. slot .. ":" .. id, bullet = id, family = info.family,
+                        text = string.format("%s %s %d", tag, Ammo.BulletShort(id, info.family), Plan.LooseRounds(slot, id)),
                         name = info.name }
                 end
             elseif not info.loose_fed then

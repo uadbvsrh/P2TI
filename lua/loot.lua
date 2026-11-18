@@ -32,7 +32,8 @@ PDTI.Loot = Loot
 Loot.ITEM_ID = "loot_bag"
 
 -- The containers a loot bag can lie in. The pockets are too small for one.
-Loot.CONTAINERS = { "rig", "rig_2", "rig_3", "backpack" }
+-- The loot slots (Clover's room) first: that is what they are for.
+Loot.CONTAINERS = { "loot_slot", "rig", "rig_2", "rig_3", "backpack" }
 
 -- After a throw, the next bag comes into your hands at once (the next frame)
 -- if it can; it is tried for this long (e.g. while you climb a ladder).
@@ -40,20 +41,16 @@ Loot.PULL_WINDOW = 3
 -- The "no room" hint is shown at most this often.
 Loot.HINT_INTERVAL = 2
 
+-- What a bag's quality writes into its data (loot_quality.lua).
+Loot.QUALITY_FIELDS = { "quality", "mods", "w", "h", "max_stack" }
+
 local CARRY_FIELDS = { "carry_id", "multiplier", "dye_initiated", "has_dye_pack", "dye_value_multiplier" }
 
 local runtime = { pull_until = nil, failed_carry = nil, hooks = false }
 
-local function log(message)
-    local line = "[PDTI LOOT] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI LOOT")
 
-local function now()
-    local ok, t = pcall(function() return Application:time() end)
-    if ok and type(t) == "number" then return t end
-    return os.clock()
-end
+local now = PDTI.AppTime
 
 -- The loot bags in the inventory.
 local function bags()
@@ -72,11 +69,18 @@ local function bags()
 end
 
 -- The item of the bag the game carries.
+local function is_active_bag(container, item)
+    return item.item_id == Loot.ITEM_ID and type(item.data) == "table" and item.data.active and true or false
+end
 local function active_entry()
-    for _, entry in ipairs(bags()) do
-        if entry.data.active then return entry end
-    end
-    return nil
+    local container, item = PDTI.FindFirstItem(is_active_bag)
+    if not item then return nil end
+    return {
+        container = container,
+        instance_id = item.instance_id,
+        amount = math.max(0, math.floor(tonumber(item.amount) or 0)),
+        data = item.data
+    }
 end
 
 -- The bags that lie in the inventory (not the one in your hands).
@@ -121,28 +125,152 @@ function Loot.Add(amount, data)
     if amount <= 0 then return true end
 
     for _ = 1, amount do
-        local placed = false
+        local placed = Loot.StackOnto(data)
         for _, name in ipairs(Loot.CONTAINERS) do
+            if placed then break end
             local ok = PDTI.AddItemAuto(name, Loot.ITEM_ID, 1, data, true)
-            if ok then placed = true break end
+            if ok then placed = true end
         end
         if not placed then
             return false, "no room in the inventory"
         end
     end
+    -- A Stackable bag that took a place of its own gathers the single bags
+    -- of its loot.
+    if type(data) == "table" and not data.active and Loot.Gather then Loot.Gather() end
     return true
 end
 
--- Takes loot bags out of the inventory.
+-- Bags of the same loot: kind and what the dye pack left of its value (a
+-- field missing in one and false in the other is the same). Quality and
+-- modifiers do not matter: a Stackable bag carries any bag of its loot.
+local function stack_key(data)
+    local function num(v, default) return tonumber(v) or default end
+    return table.concat({ tostring(data.carry_id), tostring(num(data.multiplier, 1)),
+        tostring(data.dye_initiated == true), tostring(data.has_dye_pack == true),
+        tostring(num(data.dye_value_multiplier, 100)) }, "|")
+end
+Loot.StackKey = stack_key
+
+local function lq() return PDTI.LootQuality end
+
+local function bag_limit(data)
+    return PDTI.ItemMaxStack(PDTI.GetItemDefinition(Loot.ITEM_ID) or {}, data)
+end
+
+-- A stored Stackable bag with room that one more bag of this loot rides on,
+-- or nil. (Only a single bag joins: a stack does not join another.)
+local function stack_for(data, skip_id)
+    if type(data) ~= "table" or data.active then return nil end
+    if type(data.extra) == "string" and data.extra ~= "" then return nil end
+    local key = stack_key(data)
+    for _, entry in ipairs(bags()) do
+        if entry.instance_id ~= skip_id and not entry.data.active and entry.amount < bag_limit(entry.data)
+            and stack_key(entry.data) == key then
+            return entry
+        end
+    end
+    return nil
+end
+Loot._StackFor = stack_for
+
+-- The edit that puts one bag (its data) onto a stack: one more, its roll
+-- at the end of the stack's list.
+local function join_spec(target, data)
+    local L = lq()
+    local roll = L and L.EncodeRoll(L.InfoOf(data) or { quality = 1, mods = {} }) or "1:"
+    local extra = type(target.data.extra) == "string" and target.data.extra or ""
+    -- A stack made before 0.35.2 (copies of its own roll): write them down.
+    if L and extra == "" and target.amount > 1 then
+        local own = L.EncodeRoll(L.InfoOf(target.data))
+        local parts = {}
+        for _ = 2, target.amount do parts[#parts + 1] = own end
+        extra = table.concat(parts, ";")
+    end
+    extra = extra == "" and roll or (extra .. ";" .. roll)
+    return {
+        set_amount = { { container = target.container, instance_id = target.instance_id, amount = target.amount + 1 } },
+        update = { { container = target.container, instance_id = target.instance_id, data = { extra = extra } } }
+    }
+end
+
+-- Puts one bag onto a Stackable bag of its loot; true if it did.
+function Loot.StackOnto(data)
+    local target = stack_for(data)
+    if not target then return false end
+    local ok = PDTI.EditItems(join_spec(target, data))
+    return ok and true or false
+end
+
+-- A bag lying on its own rides on a Stackable bag of its loot, if one has
+-- room.
+function Loot.TryStack(container, instance_id)
+    local item = PDTI.FindItem(container, instance_id)
+    if not item or item.item_id ~= Loot.ITEM_ID or (tonumber(item.amount) or 1) ~= 1 then return false end
+    local target = stack_for(item.data, instance_id)
+    if not target then return false end
+    local spec = join_spec(target, item.data)
+    spec.remove = { { container = container, instance_id = instance_id } }
+    local ok = PDTI.EditItems(spec)
+    return ok and true or false
+end
+
+-- A Stackable bag gathers the single bags of its loot lying in the
+-- inventory, while it has room. Returns how many joined it.
+function Loot.Gather()
+    local n = 0
+    for _ = 1, 64 do
+        local moved = false
+        for _, entry in ipairs(bags()) do
+            if not entry.data.active and entry.amount == 1
+                and not (type(entry.data.extra) == "string" and entry.data.extra ~= "")
+                and Loot.TryStack(entry.container, entry.instance_id) then
+                n, moved = n + 1, true
+                break
+            end
+        end
+        if not moved then break end
+    end
+    return n
+end
+
+-- The data of the bag that leaves a stack (the last one on it) and the
+-- stack's list without it.
+local function pop_spec(entry)
+    local L = lq()
+    local d = entry.data
+    local single = {}
+    for k, v in pairs(d) do single[k] = v end
+    single.extra = nil
+    local rolls = L and L.StackRolls(d, entry.amount) or {}
+    local last = rolls[#rolls]
+    if L and last and #rolls > 1 then L.Apply(single, last) end
+    local rest = {}
+    if L then
+        for i = 2, #rolls - 1 do rest[#rest + 1] = L.EncodeRoll(rolls[i]) end
+    end
+    return single, table.concat(rest, ";")
+end
+Loot._PopSpec = pop_spec
+
+-- Takes loot bags out of the inventory (the last ones on a stack first).
 function Loot.Remove(amount)
     amount = math.max(0, math.floor(tonumber(amount) or 0))
     local remaining = amount
     for _, entry in ipairs(bags()) do
-        if remaining <= 0 then break end
-        if entry.amount > 0 then
-            local take = math.min(remaining, entry.amount)
-            local ok = PDTI.RemoveItem(entry.container, entry.instance_id, take)
-            if ok then remaining = remaining - take end
+        while remaining > 0 and entry.amount > 1 do
+            local _, rest = pop_spec(entry)
+            local ok = PDTI.EditItems({
+                set_amount = { { container = entry.container, instance_id = entry.instance_id, amount = entry.amount - 1 } },
+                update = { { container = entry.container, instance_id = entry.instance_id, data = { extra = rest } } }
+            })
+            if not ok then break end
+            entry.amount = entry.amount - 1
+            entry.data.extra = rest
+            remaining = remaining - 1
+        end
+        if remaining > 0 and entry.amount == 1 then
+            if PDTI.RemoveItem(entry.container, entry.instance_id, 1) then remaining = remaining - 1 end
         end
     end
     return amount - remaining
@@ -167,7 +295,7 @@ function Loot.CarriedId()
     -- not there, and the game logs the error even when it is caught.
     if type(pm.player_unit) ~= "function" or not pm:player_unit() then return nil end
 
-    local ok, carry_id = pcall(function() return pm:current_carry_id() end)
+    local ok, carry_id = pcall(pm.current_carry_id, pm)
     if not ok or type(carry_id) ~= "string" or carry_id == "" then return nil end
     if not is_loot(carry_id) then return nil end
 
@@ -222,13 +350,14 @@ function Loot.CanStash()
 end
 
 -- Puts the bag you carry into the inventory: your hands are free again.
-function Loot.StashCarried()
+-- rolled: the bag's data with its roll already made (it is not rolled again).
+function Loot.StashCarried(rolled)
     if not Loot.MultiAllowed() then return false, "only the host can carry more than one bag" end
     local data = Loot.CarriedData()
     if not data then return false, "you carry no loot bag" end
 
     local stored = {}
-    for k, v in pairs(data) do stored[k] = v end
+    for k, v in pairs(rolled or data) do stored[k] = v end
     stored.active = false
 
     local active = active_entry()
@@ -237,7 +366,13 @@ function Loot.StashCarried()
         ok, reason = PDTI.EditItems({ update = {
             { container = active.container, instance_id = active.instance_id, data = stored }
         } })
+        if ok then
+            Loot.TryStack(active.container, active.instance_id)
+            Loot.Gather()
+        end
     else
+        local LQ = PDTI.LootQuality
+        if LQ then LQ.Stamp(stored) end
         ok, reason = Loot.Add(1, stored)
     end
     if not ok then return false, reason or "no room in the inventory" end
@@ -272,6 +407,29 @@ function Loot.TakeOut(entry)
     if not entry or not is_loot(entry.data.carry_id) then return false, "no stored loot bag" end
 
     local d = entry.data
+    -- A bag from a stack: the last one on it takes a place of its own in
+    -- your hands, with its own roll.
+    if (tonumber(entry.amount) or 1) > 1 then
+        local single, rest = pop_spec(entry)
+        single.active = true
+        d = single
+        local placed = false
+        for _, name in ipairs(Loot.CONTAINERS) do
+            if PDTI.AddItemAuto(name, Loot.ITEM_ID, 1, single, true) then placed = true break end
+        end
+        if not placed then return false, "no room to take a bag off the stack" end
+        local split = PDTI.EditItems({
+            set_amount = { { container = entry.container, instance_id = entry.instance_id, amount = entry.amount - 1 } },
+            update = { { container = entry.container, instance_id = entry.instance_id, data = { extra = rest } } }
+        })
+        if not split then
+            local hands = active_entry()
+            if hands then PDTI.RemoveItem(hands.container, hands.instance_id) end
+            return false, "could not take a bag off the stack"
+        end
+        entry = active_entry()
+        if not entry then return false, "could not take a bag off the stack" end
+    end
     local ok, err = pcall(function()
         managers.player:set_carry(d.carry_id, d.multiplier or 1, d.dye_initiated, d.has_dye_pack, d.dye_value_multiplier)
         local peer = local_peer()
@@ -313,33 +471,26 @@ end
 
 ----------------------------------------------------------- the game hooks
 
+Loot._hooks = Loot._hooks or {}
 local function wrap(class_name, fn_name, make)
-    local cls = rawget(_G, class_name)
-    local current = cls and cls[fn_name]
-    if type(current) ~= "function" then return false end
-    Loot._hooks = Loot._hooks or {}
-    local key = class_name .. "." .. fn_name
-    if Loot._hooks[key] == current then return true end
-    if PDTI.HookHas(current, "loot") then return true end
-    local hook = make(current)
-    PDTI.HookMark(hook, current, "loot")
-    Loot._hooks[key] = hook
-    cls[fn_name] = hook
-    return true
+    return PDTI.Wrap(Loot._hooks, "loot", class_name, fn_name, make)
 end
 
 -- The carry id of the bag lying in the world.
 local function world_carry_id(ext)
-    local ok, id = pcall(function() return ext._unit:carry_data():carry_id() end)
+    local cd = ext and PDTI.CarryExt(ext._unit)
+    local ok, id = false, nil
+    if cd and type(cd.carry_id) == "function" then ok, id = pcall(cd.carry_id, cd) end
     if ok and type(id) == "string" then return id end
     return ext and ext._carry_id or nil
 end
 
 local function game_blocks(ext)
     local blocked = false
+    local cd = ext and PDTI.CarryExt(ext._unit)
     pcall(function()
         blocked = managers.player:carry_blocked_by_cooldown()
-            or ext._unit:carry_data():is_attached_to_zipline_unit()
+            or (cd ~= nil and cd:is_attached_to_zipline_unit())
     end)
     return blocked
 end
@@ -360,10 +511,10 @@ end
 
 -- Picking up a bag while you carry one: the carried bag goes into the
 -- inventory and you carry the new one.
-local function can_swap()
+local function can_swap(ext)
     if not Loot.MultiAllowed() then return false end
     if not Loot.CarriedId() then return false end
-    return Loot.RoomForPickup()
+    return Loot.RoomForPickup() or (ext ~= nil and Loot.WouldStack(ext))
 end
 
 local last_hint = nil
@@ -372,9 +523,7 @@ local function hint_no_room()
     if last_hint and t - last_hint < Loot.HINT_INTERVAL then return end
     last_hint = t
     log("no room in the inventory for another loot bag")
-    pcall(function()
-        managers.hud:show_hint({ text = "No room for the bag: make room in the rig or the backpack", time = 2 })
-    end)
+    PDTI.Hint("No room for the bag: make room in the rig or the backpack", 2)
 end
 Loot._hint_no_room = hint_no_room
 
@@ -386,8 +535,36 @@ function Loot.PickupBlocked(ext)
     pcall(function() carrying = managers.player:is_carrying() end)
     if carrying and not Loot.CarriedId() then return nil end -- a body or mission item: the game's rule
     if carrying and not Loot.MultiAllowed() then return nil end -- one bag, the game's rule
-    if not Loot.RoomForPickup() then return "room" end
+    if not Loot.RoomForPickup() and not Loot.WouldStack(ext) then return "room" end
     return nil
+end
+
+-- The bag lying there as the inventory would hold it (its roll from the
+-- level), or nil.
+function Loot.WorldBagData(ext)
+    local cd = ext and PDTI.CarryExt(ext._unit)
+    local info = cd and cd._pdti_quality
+    if type(info) ~= "table" then return nil end
+    local data = { carry_id = world_carry_id(ext), multiplier = 1 }
+    for _, key in ipairs({ "multiplier", "dye_initiated", "has_dye_pack", "dye_value_multiplier" }) do
+        local fn = cd[key]
+        if type(fn) == "function" then
+            local ok, v = pcall(fn, cd)
+            if ok and v ~= nil then data[key] = v end
+        end
+    end
+    local LQ = PDTI.LootQuality
+    if LQ then LQ.Apply(data, info) end
+    data.active = false
+    return data
+end
+
+-- Would that bag join a stack you have (a Stackable bag like it)?
+-- Not while you carry a bag that has no place of its own.
+function Loot.WouldStack(ext)
+    if Loot.CarriedId() and not active_entry() then return false end
+    local data = Loot.WorldBagData(ext)
+    return data ~= nil and stack_for(data) ~= nil
 end
 
 function Loot.InstallHooks()
@@ -401,7 +578,7 @@ function Loot.InstallHooks()
                     hint_no_room()
                     return true, true
                 end
-                if can_swap() then return not can_carry(carry_id) end
+                if can_swap(self) then return not can_carry(carry_id) end
             end
             return orig(self, player)
         end
@@ -423,7 +600,7 @@ function Loot.InstallHooks()
                 hint_no_room()
                 return false
             end
-            if can_swap() then
+            if can_swap(self) then
                 local stashed, reason = Loot.StashCarried()
                 if not stashed then
                     log("could not stash the carried bag: " .. tostring(reason))
@@ -445,6 +622,12 @@ end
 -- Follows the bag the player carries.
 function Loot.Tick()
     pcall(Loot.InstallHooks)
+    local LQ = PDTI.LootQuality
+    if LQ then pcall(LQ.InstallHooks) end
+    if PDTI.Stash then pcall(PDTI.Stash.InstallHooks) end
+    if PDTI.Armory then pcall(PDTI.Armory.InstallHooks) end
+    -- The safehouse is not a heist: no loot is followed there.
+    if PDTI.InSafehouse() then return end
 
     local carried = Loot.CarriedData()
     local active = active_entry()
@@ -456,7 +639,21 @@ function Loot.Tick()
             local data = {}
             for k, v in pairs(carried) do data[k] = v end
             data.active = true
+            if LQ then LQ.Stamp(data) end
             local ok, reason = Loot.Add(1, data)
+            -- No place for it, but a stack of the same Stackable bags has
+            -- room: it goes straight onto the stack, your hands are free.
+            if not ok then
+                local onto = {}
+                for k, v in pairs(data) do onto[k] = v end
+                onto.active = false
+                local target = stack_for(onto)
+                if target and Loot.StashCarried(onto) then
+                    ok = true
+                    log(string.format("the bag went onto a Stackable bag (%d of %d)", target.amount + 1,
+                        bag_limit(target.data)))
+                end
+            end
             if not ok and runtime.failed_carry ~= carried.carry_id then
                 runtime.failed_carry = carried.carry_id
                 log("no room for the bag you carry: " .. tostring(reason))
@@ -466,6 +663,12 @@ function Loot.Tick()
         elseif active.data.carry_id ~= carried.carry_id then
             local data = {}
             for k, v in pairs(carried) do data[k] = v end
+            -- Another bag in your hands: its own roll, nothing of the old one
+            -- (the update merges, so cleared fields are written as false).
+            if LQ then LQ.Stamp(data) end
+            for _, key in ipairs(Loot.QUALITY_FIELDS) do
+                if data[key] == nil then data[key] = false end
+            end
             PDTI.EditItems({ update = {
                 { container = active.container, instance_id = active.instance_id, data = data }
             } })
@@ -496,6 +699,7 @@ end
 
 -- A new heist: the loot of last heist is gone.
 function Loot.OnHeistStart()
+    if PDTI.LootQuality and PDTI.LootQuality.Reset then pcall(PDTI.LootQuality.Reset) end
     runtime.pull_until = nil
     runtime.failed_carry = nil
     local spec = { remove = {} }

@@ -154,10 +154,11 @@ clear_inventory()
 PDTI.AddItemAuto("rig", "ammo_bag", 1, nil, true)
 PDTI.SetDeployable("ammo_bag")
 
--- 6b. the game's own equipment (a sentry gun) is left alone
+-- 6b. the game's own equipment the inventory does not know (another mod's
+-- deployable) is left alone
 PDTI._deploy_key_trigger = { fake = true }
-PM._equipment.selections[1] = { equipment = "sentry_gun", amount = { 1 } }
-T("the game's own sentry gun can be picked", PDTI.Deployables.SetSelection(PDTI.Deployables.GAME) == true)
+PM._equipment.selections[1] = { equipment = "mod_turret", amount = { 1 } }
+T("another mod's deployable can be picked", PDTI.Deployables.SetSelection(PDTI.Deployables.GAME) == true)
 local should = PDTI.Deployables.ShouldPlaceOurs()
 T("the inventory keeps its hands off when the game's own equipment is picked",
   should == false and PDTI.Deployables.Manages() == false, tostring(should))
@@ -251,9 +252,9 @@ T("three kinds to hand", #order == 3 and order[1] == "first_aid_kit", table.conc
 T("X: the second kind", Dep.Cycle() == order[2], Dep.GetSelection())
 T("X: the third kind", Dep.Cycle() == order[3], Dep.GetSelection())
 T("after the last comes the first", Dep.Cycle() == "first_aid_kit")
-PM._equipment.selections[1] = { equipment = "sentry_gun", amount = { 1 } }
+PM._equipment.selections[1] = { equipment = "mod_turret", amount = { 1 } }
 Dep.SetSelection(order[3])
-T("the game's own sentry gun comes after your deployables", Dep.Cycle() == Dep.GAME and Dep.Manages() == false)
+T("another mod's deployable comes after your deployables", Dep.Cycle() == Dep.GAME and Dep.Manages() == false)
 T("and then the first one again", Dep.Cycle() == "first_aid_kit")
 PM._equipment.selections[1] = nil
 T("the name shown on the HUD", Dep.DisplayName():find("First Aid Kit x1") ~= nil, Dep.DisplayName())
@@ -288,8 +289,12 @@ T("the game may not place it", (function()
 end)())
 PE.calls = {}
 T("and nothing is placed through the game", PM.use_selected_equipment(PM, unit) == nil and #PE.calls == 0)
+PM._equipment.selections[1] = { equipment = "mod_turret", amount = { 1 } }
+T("another mod's deployable you brought is still the game's", Dep.BlocksGame() == false
+  and PM.can_use_selected_equipment(PM, unit) == true)
 PM._equipment.selections[1] = { equipment = "sentry_gun", amount = { 1 } }
-T("a sentry gun you brought is still the game's", Dep.BlocksGame() == false and PM.can_use_selected_equipment(PM, unit) == true)
+T("a sentry gun you brought but do not carry is blocked like an ammo bag", Dep.BlocksGame() == true
+  and PM.can_use_selected_equipment(PM, unit) == false)
 PM._equipment.selections[1] = { equipment = "ammo_bag", amount = { 1 } }
 PDTI.AddItemAuto("rig", "ammo_bag", 1, nil, true)
 T("with one in the rig it can be placed again", PM.can_use_selected_equipment(PM, unit) == true)

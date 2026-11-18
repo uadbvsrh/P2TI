@@ -19,6 +19,28 @@ Application.time = function() return clock end
 Application.digest_value = function(_, v) return v end
 
 -- Every game function the parts of the mod hook.
+_G.PlayerManager = _G.PlayerManager or {}
+for _, fn in ipairs({ "drop_carry", "force_drop_carry", "sync_carry_data", "modify_value",
+  "movement_speed_multiplier" }) do
+  PlayerManager[fn] = PlayerManager[fn] or function() end
+end
+CarryInteractionExt.super.set_contour = CarryInteractionExt.super.set_contour or function() end
+_G.PlayerCarry = _G.PlayerCarry or { super = { _check_action_run = function() end, _perform_jump = function() end } }
+PlayerCarry._check_action_run = PlayerCarry._check_action_run or function() end
+PlayerCarry._perform_jump = PlayerCarry._perform_jump or function() end
+PlayerCarry._get_max_walk_speed = PlayerCarry._get_max_walk_speed or function() return 1 end
+-- 0.29.0: the stash's classes (payout, end of mission, secure zone).
+_G.LootManager = _G.LootManager or {
+  get_secured_bonus_bags_value = function() return 0 end,
+  get_secured_mandatory_bags_value = function() return 0 end
+}
+_G.MissionEndState = _G.MissionEndState or { at_enter = function() end }
+_G.ElementCarry = _G.ElementCarry or { on_executed = function() end }
+MissionEndState._continue_blocked = MissionEndState._continue_blocked or function() return false end
+_G.HUDStageEndScreen = _G.HUDStageEndScreen or { update = function() end }
+_G.AccessWeaponMenuInteractionExt = _G.AccessWeaponMenuInteractionExt or { interact = function() return true end }
+_G.CivilianHeisterInteractionExt = _G.CivilianHeisterInteractionExt or { interact = function() return true end }
+_G.PlayerCivilian = _G.PlayerCivilian or { _check_action_interact = function() return false end }
 NewRaycastWeaponBase.recoil_multiplier = function() return 0.8 end
 NewRaycastWeaponBase.spread_multiplier = function() return 1 end
 NewRaycastWeaponBase._get_current_damage = function(self, m) return 10 * (m or 1) end
@@ -27,7 +49,8 @@ _G.CopDamage = { roll_critical_hit = function(_, a) return false, a.damage end }
 _G.AkimboWeaponBase = { super = NewRaycastWeaponBase, fire = function() end }
 _G.PlayerDamage = {}
 for _, fn in ipairs({ "change_health", "set_health", "revive", "recover_health", "replenish", "damage_bullet",
-  "damage_melee", "damage_fall", "damage_explosion", "damage_fire", "damage_killzone", "damage_simple" }) do
+  "damage_melee", "damage_fall", "damage_explosion", "damage_fire", "damage_killzone", "damage_simple",
+  "_update_regenerate_timer", "_regenerate_armor" }) do
   PlayerDamage[fn] = function() end
 end
 _G.PlayerMovement = _G.PlayerMovement or {}
@@ -37,6 +60,7 @@ PlayerStandard._start_action_running = function() end
 PlayerStandard._check_action_run = function() end
 dofile(ROOT .. "lua/ammo_hooks.lua")
 dofile(ROOT .. "lua/body.lua")
+dofile(ROOT .. "lua/armour.lua")
 _G.Color = _G.Color or setmetatable({}, { __call = function(_, ...) return { ... } end })
 
 local pass, fail = 0, 0
@@ -50,13 +74,17 @@ local function near(a, b) return math.abs((a or -99) - b) < 1e-6 end
 local function frame()
   pcall(PDTI.Ammo.InstallHooks)
   pcall(PDTI.Body.InstallHooks)
+  if PDTI.Armour and PDTI.Armour.InstallHooks then pcall(PDTI.Armour.InstallHooks) end
   if PDTI.Carry and PDTI.Carry.InstallHooks then pcall(PDTI.Carry.InstallHooks) end
   if PDTI.Loot and PDTI.Loot.InstallHooks then pcall(PDTI.Loot.InstallHooks) end
+  if PDTI.LootQuality and PDTI.LootQuality.InstallHooks then pcall(PDTI.LootQuality.InstallHooks) end
+  if PDTI.Stash and PDTI.Stash.InstallHooks then pcall(PDTI.Stash.InstallHooks) end
+  if PDTI.Safehouse and PDTI.Safehouse.GameTick then pcall(PDTI.Safehouse.GameTick) end
   if PDTI.Gear and PDTI.Gear.InstallHooks then pcall(PDTI.Gear.InstallHooks) end
 end
 local CLASSES = { "NewRaycastWeaponBase", "RaycastWeaponBase", "PlayerStandard", "PlayerDamage", "PlayerMovement",
   "PlayerManager", "PlayerCarry", "PlayerInventory", "CopDamage", "AkimboWeaponBase", "CarryInteractionExt",
-  "HUDTeammate" }
+  "HUDTeammate", "LootManager", "MissionEndState", "ElementCarry", "HUDStageEndScreen", "AccessWeaponMenuInteractionExt", "CivilianHeisterInteractionExt", "PlayerCivilian" }
 local function snapshot()
   local out = {}
   for _, name in ipairs(CLASSES) do
@@ -77,6 +105,11 @@ local changed = {}
 for key, fn in pairs(later) do if first[key] ~= fn then changed[#changed + 1] = key end end
 table.sort(changed)
 T("a hundred frames later no game function was wrapped again", #changed == 0, table.concat(changed, ", "))
+T("the loot quality hooks are among them", PDTI.LootQuality.InstallHooks() == true)
+T("the stash hooks are among them", PDTI.Stash.InstallHooks() == true)
+-- The stash and the way home both sit on the end screen's at_enter.
+T("the way home's hook is among them", PDTI.Safehouse.InstallGameHooks() == true
+  and PDTI.HookHas(MissionEndState.at_enter, "home") and PDTI.HookHas(MissionEndState.at_enter, "stash"))
 
 -- The recoil has both parts once: AP (x1.5) and a black arm (x1.35).
 PDTI.Reset()

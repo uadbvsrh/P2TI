@@ -13,6 +13,9 @@ local BOX_COLOR = Color(0.30, 0.30, 0.30, 0.9)
 local FILL_COLOR = Color(0.62, 0.62, 0.62, 0.95)
 local BG_COLOR = Color(0, 0, 0, 0.35)
 local LINE_COLOR = Color(1, 1, 1, 1)
+-- The mark under what the next reload loads (or the gun's magazine, when R
+-- takes it out).
+local CHOICE_COLOR = Color(1, 0.78, 0.2, 1)
 local FONT = "fonts/font_medium_mf"
 
 local BOX_W = 20
@@ -21,10 +24,7 @@ local BOX_GAP = 4
 
 local panel = nil
 
-local function log(message)
-    local line = "[PDTI AMMO] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI AMMO")
 
 local function L(id, fallback)
     local loc = managers and managers.localization
@@ -42,20 +42,33 @@ local function collect_rows()
     if not info then return nil end
 
     local queue = {}
+    local choice = not info.loose_fed and Ammo.CurrentChoice and Ammo.CurrentChoice(wep) or nil
+    local chosen = choice == "gun" and "gun" or nil
     for _, entry in ipairs(Ammo.Magazines(info.key)) do
         queue[#queue + 1] = { rounds = entry.rounds, capacity = entry.capacity, size = entry.size,
             bullet = entry.bullet, load = entry.load }
+        if choice and entry.instance_id == choice then chosen = #queue end
     end
 
     if info.loose_fed then
         -- No magazines: one box for what is loaded, and the loose rounds.
+        -- A shotgun tube shows its shells and the kind the reload loads next.
+        local installed = { rounds = wep:get_ammo_remaining_in_clip() }
+        local spec = nil
+        if info.typed then
+            local loaded = Ammo.LoadedSpec(wep)
+            installed.load = loaded and loaded.load or nil
+            local next_shell = Ammo.NextShell and Ammo.NextShell(wep)
+            spec = next_shell and ("+" .. Ammo.BulletShort(next_shell, info.family)) or nil
+        end
         return {
             queue = {},
             caliber = info.caliber,
             capacity = math.max(1, info.capacity),
-            installed = { rounds = wep:get_ammo_remaining_in_clip() },
+            installed = installed,
             no_mag = false,
             loose_fed = true,
+            spec = spec,
             loose = Ammo.LooseOfKey(info.key)
         }
     end
@@ -88,16 +101,44 @@ local function collect_rows()
         queue = queue,
         caliber = info.caliber,
         capacity = capacity,
-        spec = loaded and Ammo.SpecTag(loaded.size, loaded.bullet) or nil,
+        spec = loaded and Ammo.SpecTag(loaded.size, loaded.bullet, info.family) or nil,
         installed = installed,
         no_mag = wep._issr_no_mag and true or false,
-        loose = Ammo.LooseOfKey(info.key)
+        loose = Ammo.LooseOfKey(info.key),
+        choice = chosen
     }
 end
 
+-- Which boxes the panel shows: the gun's magazine(s), then the magazines in
+-- grid order, at most max_boxes. A chosen magazine further down takes the
+-- last box, so you always see it. Returns the list indices to draw, the
+-- positions to mark and how many are not shown.
+function Ammo.HudOrder(in_gun, queue_n, choice, max_boxes)
+    local total = in_gun + queue_n
+    local shown = math.min(total, max_boxes)
+    local order = {}
+    for i = 1, shown do order[i] = i end
+    local marked = {}
+    if choice == "gun" then
+        for i = 1, math.min(in_gun, shown) do marked[i] = true end
+    elseif type(choice) == "number" then
+        local index = in_gun + choice
+        if index > shown and shown > in_gun then
+            order[shown] = index
+            marked[shown] = true
+        elseif index <= shown then
+            marked[index] = true
+        end
+    end
+    return order, marked, total - shown
+end
+
 local function hud_panel()
-    local hud = managers.hud and managers.hud:script(PlayerBase.PLAYER_INFO_HUD_PD2)
-    return hud and hud.panel
+    local ok, root = pcall(function()
+        local hud = managers.hud and managers.hud:script(PlayerBase.PLAYER_INFO_HUD_PD2)
+        return hud and hud.panel
+    end)
+    return ok and root or nil
 end
 
 local function remove_panel()
@@ -215,12 +256,17 @@ local function draw_footer(target, rows, first, row_w, y)
     if rows.loose_fed then
         text = L("pdti_hud_loaded", "LOADED") .. " " .. tostring(first and first.rounds or 0)
             .. "/" .. tostring(rows.capacity)
-        if Ammo.settings.show_ammo_type then
+        if rows.spec then
+            -- The next shell a reload loads (the wheel chooses it).
+            text = text .. "  " .. rows.spec
+        elseif Ammo.settings.show_ammo_type then
             text = text .. "    " .. tostring(rows.caliber)
         end
     elseif Ammo.settings.show_mags then
         if rows.no_mag then
             text = L("issr_hud_no_mag", "NO MAG")
+        elseif rows.choice == "gun" then
+            text = L("pdti_hud_take_out", "R: TAKE OUT")
         else
             text = L("issr_hud_next", "NEXT") .. " " .. tostring(first and first.rounds or 0)
                 .. "/" .. tostring(rows.capacity)
@@ -250,7 +296,8 @@ local function build_panel(rows)
     for i = 1, #rows.queue do list[#list + 1] = rows.queue[i] end
 
     local max_boxes = math.max(2, math.floor(Ammo.settings.max_boxes or 4))
-    local shown = math.min(#list, max_boxes)
+    local order, marked, hidden = Ammo.HudOrder(in_gun, #rows.queue, rows.choice, max_boxes)
+    local shown = #order
     local row_w = (BOX_W + BOX_GAP) * max_boxes + BOX_GAP
     local header_on = Ammo.settings.show_mags or Ammo.settings.show_loose
     local foot_on = Ammo.settings.show_mags or Ammo.settings.show_ammo_type or rows.loose_fed
@@ -274,36 +321,72 @@ local function build_panel(rows)
 
     for i = 1, shown do
         local x = BOX_GAP + (i - 1) * (BOX_W + BOX_GAP)
-        if i <= in_gun then
+        local index = order[i]
+        if index <= in_gun then
             target:rect({
                 name = "pdti_mag_line_" .. i, x = x, y = head_h - 3, w = BOX_W, h = 2,
                 layer = 12, color = LINE_COLOR
             })
         end
-        if i <= in_gun and rows.no_mag then
+        if index <= in_gun and rows.no_mag then
             draw_no_mag(target, x, head_h)
         else
-            draw_mag(target, i, list[i], x, head_h, rows.capacity)
+            draw_mag(target, i, list[index], x, head_h, rows.capacity)
+        end
+        if marked[i] then
+            target:rect({
+                name = "pdti_mag_choice_" .. i, x = x, y = head_h + BOX_H + 1, w = BOX_W, h = 2,
+                layer = 12, color = CHOICE_COLOR
+            })
         end
     end
 
-    if Ammo.settings.show_more and #list > shown then
-        local x = BOX_GAP + (shown - 1) * (BOX_W + BOX_GAP)
+    -- "+N" on the last box, or the one before when the last is the chosen.
+    local more_at = marked[shown] and order[shown] ~= shown and shown - 1 or shown
+    if Ammo.settings.show_more and hidden > 0 and more_at > in_gun then
+        local x = BOX_GAP + (more_at - 1) * (BOX_W + BOX_GAP)
         target:text({
             name = "pdti_ammo_more", x = x, y = head_h, w = BOX_W, h = BOX_H,
             layer = 13, color = LINE_COLOR, font = FONT,
             font_size = math.min(Ammo.settings.font_size, 14),
-            text = "+" .. tostring(#list - shown), vertical = "center", align = "center"
+            text = "+" .. tostring(hidden), vertical = "center", align = "center"
         })
     end
 
-    if foot_on then draw_footer(target, rows, list[1], row_w, head_h + BOX_H + 4) end
+    -- The footer's NEXT is what the next reload loads.
+    local next_mag = list[1]
+    if type(rows.choice) == "number" then next_mag = rows.queue[rows.choice] end
+    if foot_on then draw_footer(target, rows, next_mag, row_w, head_h + BOX_H + 4) end
     return target
 end
 
+-- Why the panel could not be shown, written to the log once per reason
+-- (another HUD mod can take the player's HUD panel away).
+local reported = {}
+local function hud_problem(reason)
+    if reported[reason] then return end
+    reported[reason] = true
+    log("the ammunition panel cannot be shown: " .. reason)
+end
+Ammo._HudProblems = reported
+
 local function rebuild_panel(rows)
     remove_panel()
-    panel = build_panel(rows)
+    if not hud_panel() then
+        hud_problem("the game's player HUD panel is missing (another HUD mod?)")
+    end
+    local ok, result = pcall(build_panel, rows)
+    if not ok then
+        hud_problem("drawing failed: " .. tostring(result))
+        result = nil
+        remove_panel()
+        pcall(function()
+            local root = hud_panel()
+            local left = root and root:child("pdti_ammo_panel")
+            if left then root:remove(left) end
+        end)
+    end
+    panel = result
     Ammo.panel_visible = panel ~= nil
 end
 
@@ -318,7 +401,13 @@ function Ammo.SetPanel(want)
         return
     end
     local rows = collect_rows()
-    if not rows then return end
+    if not rows then
+        local wep = Ammo.EquippedBase()
+        if wep and not Ammo.Identify(wep) then
+            hud_problem("the weapon " .. tostring(wep._name_id) .. " is not known to the ammunition system")
+        end
+        return
+    end
     rebuild_panel(rows)
 end
 

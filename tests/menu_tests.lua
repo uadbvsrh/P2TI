@@ -43,9 +43,10 @@ T("the hooks go in once", PlayerInventoryGui.open_deployable_menu == hooked)
 PlayerInventoryGui.open_deployable_menu({})
 T("main menu: the Deployable slot opens the tactical inventory", PDTI.IsUIOpen() == true)
 T("and not the game's deployable menu", vanilla.inventory == 0)
-local right = ENV.menus[#ENV.menus].children[2]
+local shop
+for _, w in ipairs(ENV.menus[#ENV.menus].children) do if w.params.name == "pdti_shop" then shop = w end end
 T("the inventory shows the rig and the backpack choice and the bring list",
-  right:find("bring_label") ~= nil and ENV.menus[#ENV.menus].children[1]:find("equip_rig_general_rig") ~= nil)
+  shop and shop:find("bring_label") ~= nil and ENV.menus[#ENV.menus].children[1]:find("equip_rig_general_rig") ~= nil)
 PDTI.SetUIOpen(false)
 
 NewLoadoutTab.open_node({}, 6)

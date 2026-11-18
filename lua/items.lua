@@ -72,23 +72,82 @@ local defaults = {
         category = "utility", allowed = { pockets = true, rig = true, backpack = true },
         quick_use = true
     },
+    -- A new plate for heavy armour (armour.lua): to hand in the rig or the
+    -- pockets, the Insert Armour Plate key puts it in. (The id is the old
+    -- armour repair kit's, so saves keep it.)
     armor_kit = {
-        name = "Armor Repair Kit", w = 2, h = 1, weight = 1.2, max_stack = 1,
-        category = "utility", allowed = { rig = true, backpack = true },
-        quick_use = true
+        name = "Armour Plate", w = 2, h = 1, weight = 1.2, max_stack = 1,
+        category = "utility", allowed = { pockets = true, rig = true, backpack = true },
+        quick_use = true, plan_item = true
     },
     bodybags_bag = {
         name = "Body Bags", w = 2, h = 2, weight = 1.5, max_stack = 1,
         category = "utility", allowed = { pockets = true, rig = true, backpack = true },
         deployable = true, deployable_id = "bodybags_bag", deploy_method = "use_bodybags_bag"
     },
+    -- The game's other deployables. placement: "look" goes on a wall or the
+    -- floor in front of you (the game's look-at check), "none" is used on
+    -- yourself; anything else is put down like a bag.
+    trip_mine = {
+        name = "Trip Mine", w = 1, h = 1, weight = 0.5, max_stack = 3,
+        category = "explosive", allowed = { pockets = true, rig = true, backpack = true },
+        deployable = true, deployable_id = "trip_mine", deploy_method = "use_trip_mine", placement = "look"
+    },
+    ecm_jammer = {
+        name = "ECM Jammer", w = 1, h = 2, weight = 1.2, max_stack = 1,
+        category = "utility", allowed = { pockets = true, rig = true, backpack = true },
+        deployable = true, deployable_id = "ecm_jammer", deploy_method = "use_ecm_jammer", placement = "look"
+    },
+    spy_camera = {
+        name = "Spy Camera", w = 1, h = 1, weight = 0.4, max_stack = 2,
+        category = "utility", allowed = { pockets = true, rig = true, backpack = true },
+        deployable = true, deployable_id = "spy_camera", deploy_method = "use_spy_camera", placement = "look"
+    },
+    sentry_gun = {
+        name = "Sentry Gun", w = 3, h = 2, weight = 8.0, max_stack = 1,
+        category = "utility", allowed = { rig = true, backpack = true },
+        deployable = true, deployable_id = "sentry_gun", deploy_method = "use_sentry_gun"
+    },
+    sentry_gun_silent = {
+        name = "Suppressed Sentry Gun", w = 3, h = 2, weight = 7.0, max_stack = 1,
+        category = "utility", allowed = { rig = true, backpack = true },
+        deployable = true, deployable_id = "sentry_gun_silent", deploy_method = "use_sentry_gun"
+    },
+    grenade_crate = {
+        name = "Throwable Case", w = 2, h = 2, weight = 4.0, max_stack = 1,
+        category = "explosive", allowed = { rig = true, backpack = true },
+        deployable = true, deployable_id = "grenade_crate", deploy_method = "use_grenade_crate"
+    },
+    -- The game's armour kit (put your armour on during the heist). Its own id:
+    -- "armor_kit" is the armour plate.
+    armor_bag = {
+        name = "Armor Kit", w = 2, h = 2, weight = 3.0, max_stack = 1,
+        category = "utility", allowed = { rig = true, backpack = true },
+        deployable = true, deployable_id = "armor_kit", deploy_method = "use_armor_kit", placement = "none"
+    },
     -- A bag of loot the player carries. The game keeps counting the bags, so
     -- the money is still paid out; this item is what the loot costs in space
-    -- and weight.
+    -- and weight. A bag's quality (loot_quality.lua) can make it smaller
+    -- (data.w, data.h) or stackable (data.max_stack).
     loot_bag = {
         name = "Loot Bag", w = 2, h = 2, weight = 4.0, max_stack = 1,
         category = "utility", allowed = { rig = true, backpack = true },
-        no_supply = true
+        no_supply = true, size_by_data = true, stack_by_data = true
+    },
+    -- A spare weapon you own (armory.lua), carried in the rig or backpack.
+    -- Its size and weight are its own (data.w, data.h, data.weight).
+    weapon = {
+        name = "Weapon", w = 4, h = 2, weight = 3.0, max_stack = 1,
+        category = "utility", allowed = { rig = true, backpack = true, locker = true },
+        no_supply = true, size_by_data = true, weight_by_data = true
+    },
+    -- A weapon part you own (armory_parts.lua, 0.38.0): drag it onto a weapon
+    -- to fit it. Its size and weight are its type's (data.w, data.h,
+    -- data.weight).
+    weapon_part = {
+        name = "Weapon part", w = 1, h = 1, weight = 0.3, max_stack = 1,
+        category = "utility", allowed = { rig = true, backpack = true, locker = true },
+        no_supply = true, size_by_data = true, weight_by_data = true
     }
 }
 
@@ -105,7 +164,9 @@ _G.PDTI_EQUIPMENT = _G.PDTI_EQUIPMENT or {}
 --   (neither)           any item that may go in a rig
 -- The first section of a rig is the container "rig", the next ones are
 -- "rig_2" and "rig_3".
-local AMMO = { spare_magazine = true, loose_ammo = true }
+-- The ammunition slots of the rigs: magazines, loose rounds and armour
+-- plates.
+local AMMO = { spare_magazine = true, loose_ammo = true, armor_kit = true }
 
 local equipment = {
     backpacks = {
@@ -127,7 +188,7 @@ local equipment = {
     rigs = {
         medical_rig = {
             name = "Medical Rig", short = "Medical", self_revive = true,
-            description = "Kits and medic bags, 2 ammo pouches. Get up once per heist with a medic bag (SPACE).",
+            description = "Kits and medic bags, 2 pouches for ammunition and plates. Get up once per heist with a medic bag (SPACE).",
             sections = {
                 { name = "Medical", kind = "medical", w = 8, h = 2, max_weight = 14,
                   items = { first_aid_kit = true, doctor_bag = true } },
@@ -137,9 +198,11 @@ local equipment = {
         },
         assault_rig = {
             name = "Assault Rig", short = "Assault",
-            description = "21 slots for ammunition, 12 slots for ammo bags.",
+            description = "21 slots for ammunition and armour plates, 12 slots for ammo bags.",
             sections = {
-                { name = "Ammunition", kind = "ammo", w = 7, h = 3, max_weight = 14, items = AMMO },
+                -- (max_weight is not a cap any more: rigs are limited by their
+                -- slots only, see container_weight_limit in inventory.lua.)
+                { name = "Ammunition", kind = "ammo", w = 7, h = 3, max_weight = 30, items = AMMO },
                 { name = "Ammo bags", kind = "ammo_bags", w = 6, h = 2, max_weight = 8, items = { ammo_bag = true } }
             }
         },

@@ -2,7 +2,7 @@
 local PDTI = rawget(_G, "PDTI") or {}
 _G.PDTI = PDTI
 
-PDTI.VERSION = "0.18.7"
+PDTI.VERSION = "0.40.1"
 PDTI.SCHEMA_VERSION = 6
 
 -- Hooks on game functions. Several parts of the mod can hook the same
@@ -26,6 +26,131 @@ function PDTI.HookMark(new_fn, under_fn, tag)
     owners[tag] = true
     PDTI.HookOwners[new_fn] = owners
 end
+
+-- Wraps class_name.fn_name with make(original) for the part `tag`, unless
+-- that part's hook is still in the chain. store remembers the hook by
+-- "class.fn" (or `key`). Every part calls this each frame, so it must not
+-- allocate when the hook is in place.
+-- "class.fn" strings, built once (the key is rebuilt every frame otherwise).
+local wrap_keys = {}
+function PDTI.WrapKey(class_name, fn_name)
+    local by_class = wrap_keys[class_name]
+    if not by_class then by_class = {}; wrap_keys[class_name] = by_class end
+    local key = by_class[fn_name]
+    if not key then
+        key = class_name .. "." .. fn_name
+        by_class[fn_name] = key
+    end
+    return key
+end
+
+function PDTI.Wrap(store, tag, class_name, fn_name, make, key)
+    local cls = rawget(_G, class_name)
+    local current = cls and cls[fn_name]
+    if type(current) ~= "function" then return false end
+    key = key or PDTI.WrapKey(class_name, fn_name)
+    if store[key] == current or PDTI.HookHas(current, tag) then return true end
+    local hook = make(current)
+    PDTI.HookMark(hook, current, tag)
+    store[key] = hook
+    cls[fn_name] = hook
+    return true
+end
+
+-------------------------------------------------------- shared helpers
+-- Every part of the mod logs, shows hints and reads the clocks the same way.
+-- No closures: some of these run every frame.
+
+-- A log function whose lines start with "[<prefix>] ".
+function PDTI.Logger(prefix)
+    local head = "[" .. prefix .. "] "
+    return function(message)
+        local line = head .. tostring(message)
+        if _G.log then _G.log(line) else print(line) end
+    end
+end
+
+local function show_hint(hud, text, time)
+    hud:show_hint({ text = text, time = time })
+end
+function PDTI.Hint(text, time)
+    local m = rawget(_G, "managers")
+    local hud = m and m.hud
+    if hud then pcall(show_hint, hud, text, time) end
+end
+
+-- Application:time(): real time, runs while paused.
+function PDTI.AppTime()
+    local app = rawget(_G, "Application")
+    local f = app and app.time
+    if f then
+        local ok, t = pcall(f, app)
+        if ok and type(t) == "number" then return t end
+    end
+    return os.clock()
+end
+
+-- TimerManager:game():time(): the heist's time, stops while paused.
+local function game_time(tm)
+    local timer = tm:game()
+    return timer:time()
+end
+function PDTI.GameTime()
+    local tm = rawget(_G, "TimerManager")
+    if tm then
+        local ok, t = pcall(game_time, tm)
+        if ok and type(t) == "number" then return t end
+    end
+    return os.clock()
+end
+
+-- The safehouse (the job "chill") is your base, not a heist: there the mod
+-- behaves as in the menu. Everything is saved, the bring list and the stash
+-- work, and the weapons are the game's own (nothing of what you bring is
+-- used up). The safehouse raid ("chill_combat") is a heist. Vanilla only,
+-- like the rest of the safehouse. Called every frame: no pcall, no tables.
+function PDTI.InSafehouse()
+    if rawget(_G, "restoration") ~= nil then return false end
+    local m = rawget(_G, "managers")
+    local jm = m and m.job
+    if not jm or type(jm.current_job_id) ~= "function" then return false end
+    return jm:current_job_id() == "chill"
+end
+
+-- A unit's carry data, or nil. Never raises: an error inside pcall is still
+-- logged as FATAL by the game, and a bag being spawned has no carry data yet.
+function PDTI.CarryExt(unit)
+    if unit == nil then return nil end
+    local is_alive = rawget(_G, "alive")
+    if is_alive and not is_alive(unit) then return nil end
+    local get = unit.carry_data
+    if type(get) ~= "function" then return nil end
+    local cd = get(unit)
+    if cd == nil or (type(cd) ~= "table" and type(cd) ~= "userdata") then return nil end
+    return cd
+end
+
+local function player_unit(pm) return pm:player_unit() end
+function PDTI.PlayerUnit()
+    local m = rawget(_G, "managers")
+    local pm = m and m.player
+    if not pm then return nil end
+    local ok, u = pcall(player_unit, pm)
+    if ok then return u end
+    return nil
+end
+
+local function character_damage(pm) return pm:player_unit():character_damage() end
+-- The local player's PlayerDamage, or nil.
+function PDTI.PlayerDamage()
+    local m = rawget(_G, "managers")
+    local pm = m and m.player
+    if not pm then return nil end
+    local ok, pd = pcall(character_damage, pm)
+    if ok and type(pd) == "table" then return pd end
+    return nil
+end
+
 PDTI.items = rawget(_G, "PDTI_ITEMS") or {}
 PDTI.equipment = rawget(_G, "PDTI_EQUIPMENT") or {}
 
@@ -37,21 +162,34 @@ local DEFAULT_EQUIPMENT = {
 -- Every container. A rig has up to three sections: "rig", "rig_2", "rig_3".
 -- The weapons have a slot each: the magazine in it goes into the gun (in the
 -- menu: the one the heist starts with; in a heist: the next one loaded).
-PDTI.CONTAINERS = { "pockets", "rig", "rig_2", "rig_3", "backpack", "gun_primary", "gun_secondary" }
+-- The ammo pouch (Fully Loaded) holds loose rounds only; without the skill
+-- it has no room. The loot slots (Clover's room, perks.lua) hold loot bags
+-- next to the medium backpack; without the room they have no room.
+-- 0.37.0: the weapons you own are grid items. The locker (the safehouse's,
+-- 12x10) keeps them, a hand slot holds the weapon you take into the heist.
+-- These three are not carried: their weight does not count, and in a heist
+-- nothing goes into them or out of them.
+PDTI.CONTAINERS = { "pockets", "rig", "rig_2", "rig_3", "backpack", "gun_primary", "gun_secondary", "pouch",
+    "loot_slot", "hand_primary", "hand_secondary", "locker" }
 PDTI.GUN_SLOTS = { gun_primary = "primary", gun_secondary = "secondary" }
+PDTI.HAND_SLOTS = { hand_primary = "primaries", hand_secondary = "secondaries" }
+PDTI.STORAGE = { hand_primary = true, hand_secondary = true, locker = true }
+PDTI.LOCKER = { w = 12, h = 10, name = "Locker" }
+-- A weapon slot (PRI / SEC) holds one weapon whatever its size, like a
+-- gun's magazine slot: it is one cell, and the weapon takes one cell there.
+PDTI.HAND = { w = 1, h = 1 }
+function PDTI.IsHandSlot(name) return PDTI.HAND_SLOTS[name] ~= nil end
 PDTI.RIG_SECTIONS = { "rig", "rig_2", "rig_3" }
 -- What is "to hand": the pockets and every section of the rig.
 PDTI.TO_HAND = { "pockets", "rig", "rig_2", "rig_3" }
 local RIG_INDEX = { rig = 1, rig_2 = 2, rig_3 = 3 }
 local CONTAINER_SET = { pockets = true, rig = true, rig_2 = true, rig_3 = true, backpack = true,
-    gun_primary = true, gun_secondary = true }
+    gun_primary = true, gun_secondary = true, pouch = true, loot_slot = true,
+    hand_primary = true, hand_secondary = true, locker = true }
 function PDTI.IsGunSlot(name) return PDTI.GUN_SLOTS[name] ~= nil end
 function PDTI.IsRigSection(name) return RIG_INDEX[name] ~= nil end
 
-local function log(message)
-    local line = "[PDTI] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI")
 
 local function copy_table(value, seen)
     if type(value) ~= "table" then return value end
@@ -93,6 +231,18 @@ local function shallow_data_equal(a, b)
     return true
 end
 
+-- How many of an item fit in one stack: its kind's max_stack, or the item's
+-- own (data.max_stack) when the kind allows it (a stackable loot bag).
+local function item_max_stack(def, data)
+    local max_stack = math.max(1, math.floor(tonumber(def and def.max_stack) or 1))
+    if def and def.stack_by_data and type(data) == "table" and tonumber(data.max_stack) then
+        max_stack = math.max(max_stack, math.floor(tonumber(data.max_stack)))
+    end
+    return max_stack
+end
+PDTI.ItemMaxStack = item_max_stack
+PDTI.SameItemData = shallow_data_equal
+
 local function new_state()
     return {
         schema_version = PDTI.SCHEMA_VERSION,
@@ -101,6 +251,10 @@ local function new_state()
             backpack = DEFAULT_EQUIPMENT.backpack,
             rig = DEFAULT_EQUIPMENT.rig
         },
+        -- Safehouse room bonuses (perks.lua): the option picked for each
+        -- piece (a room id), and the room tiers seen last.
+        perks = {},
+        room_tiers = {},
         containers = {
             pockets = { items = {} },
             rig = { items = {} },
@@ -108,7 +262,12 @@ local function new_state()
             rig_3 = { items = {} },
             backpack = { items = {} },
             gun_primary = { items = {} },
-            gun_secondary = { items = {} }
+            gun_secondary = { items = {} },
+            pouch = { items = {} },
+            loot_slot = { items = {} },
+            hand_primary = { items = {} },
+            hand_secondary = { items = {} },
+            locker = { items = {} }
         },
         -- Preserve save entries from optional item mods that register after
         -- this core mod has loaded. They are restored when their definition
@@ -137,10 +296,30 @@ function PDTI.ProfileIndex()
     return math.floor(index)
 end
 
+-- 0.37.0: the mod plays on its own progress save (save_slot.lua). Its files
+-- then have their own names, so the inventory, stash and armory of the old
+-- save (the game's own) are left as they were.
+function PDTI.SeparateSave()
+    local forced = rawget(_G, "PDTI_SEPARATE_SAVE")
+    if forced ~= nil then return forced == true end
+    local si, ids = rawget(_G, "SystemInfo"), rawget(_G, "Idstring")
+    if not si or not ids then return false end
+    local ok, yes = pcall(function() return si:platform() == ids("WIN32") end)
+    return ok and yes == true
+end
+
+-- "pdti_save_<what>_profile<n>.json" on the mod's own save, nil otherwise.
+function PDTI.SaveFileName(what, index)
+    if not PDTI.SeparateSave() then return nil end
+    return "pdti_save_" .. what .. "_profile" .. tostring(index or 1) .. ".json"
+end
+
 -- Profile 1 keeps the file of the versions before profiles, so an existing
 -- inventory becomes the first profile's.
 local function profile_file(index)
     index = index or PDTI.loaded_profile or 1
+    local own = PDTI.SaveFileName("inventory", index)
+    if own then return own end
     if index == 1 then return "pdti_inventory.json" end
     return "pdti_inventory_profile" .. tostring(index) .. ".json"
 end
@@ -246,7 +425,14 @@ local function dimensions(item, rotated, container_name)
     if not def then return nil, nil end
     -- A weapon's slot holds its magazine whatever its size: one cell each.
     if container_name and PDTI.GUN_SLOTS[container_name] then return 1, 1 end
+    -- A weapon slot (PRI / SEC) holds its weapon whatever its size.
+    if container_name and PDTI.HAND_SLOTS[container_name] then return 1, 1 end
     local w, h = tonumber(def.w), tonumber(def.h)
+    if def.size_by_data then
+        -- The item's own size (a compact loot bag is smaller than its kind).
+        local data = type(item.data) == "table" and item.data or nil
+        if data and tonumber(data.w) and tonumber(data.h) then w, h = tonumber(data.w), tonumber(data.h) end
+    end
     if def.size_by_capacity then
         local data = type(item.data) == "table" and item.data or nil
         if data and tonumber(data.capacity) then
@@ -275,6 +461,9 @@ local state
 
 -- A section that the rig does not have: nothing fits in it.
 local NO_SECTION = { w = 0, h = 0, max_weight = 0, missing = true }
+PDTI.POCKETS = { w = 2, h = 2, max_weight = 4 }
+PDTI.POCKETS_BIG = { w = 2, h = 3, max_weight = 6 }
+PDTI.POUCH = { w = 2, h = 2, max_weight = 8, name = "Ammo pouch", items = { loose_ammo = true } }
 
 -- The sections of a rig (a rig without sections is one section).
 local function rig_sections(rig)
@@ -284,27 +473,51 @@ local function rig_sections(rig)
 end
 PDTI.RigSections = rig_sections
 
+-- A rig or backpack with its safehouse room bonus (perks.lua).
+local function perked(group, id, source_state)
+    local def = PDTI.equipment[group] and PDTI.equipment[group][id]
+    local perks = PDTI.Perks
+    if def and perks and perks.Equipment then return perks.Equipment(id, def, source_state or state) or def end
+    return def
+end
+PDTI.PerkedEquipment = perked
+
 local function get_equipment_definition(container_name, source_state)
     local eq = (source_state or state).equipment or {}
     local index = RIG_INDEX[container_name]
     if index then
-        local rig = PDTI.equipment.rigs[eq.rig]
+        local rig = perked("rigs", eq.rig, source_state)
         if not rig then return index == 1 and nil or NO_SECTION end
         return rig_sections(rig)[index] or NO_SECTION
     elseif container_name == "backpack" then
-        return PDTI.equipment.backpacks[eq.backpack]
+        return perked("backpacks", eq.backpack, source_state)
+    elseif container_name == "pouch" then
+        local owned = PDTI.PouchOwned
+        if type(owned) == "function" and owned() then return PDTI.POUCH end
+        return NO_SECTION
+    elseif container_name == "loot_slot" then
+        local perks = PDTI.Perks
+        local slot = perks and perks.LootSlot and perks.LootSlot(source_state or state)
+        return slot or NO_SECTION
+    elseif container_name == "locker" then
+        return PDTI.LOCKER
+    elseif PDTI.HAND_SLOTS[container_name] then
+        return PDTI.HAND
     elseif PDTI.GUN_SLOTS[container_name] then
         -- Room for the biggest magazine (2x2), or the two of akimbo guns.
         -- One magazine per gun: two cells for akimbo guns.
         return { w = 2, h = 1, max_weight = 10, gun = true }
     end
-    return { w = 2, h = 2, max_weight = 4 }
+    -- The pockets; Inner Pockets ace adds a row (skills_ghost.lua).
+    local big = PDTI.PocketsBig
+    if type(big) == "function" and big() then return PDTI.POCKETS_BIG end
+    return PDTI.POCKETS
 end
 
 -- The rig itself (not a section).
 local function get_rig(source_state)
     local eq = (source_state or state).equipment or {}
-    return PDTI.equipment.rigs[eq.rig]
+    return perked("rigs", eq.rig, source_state)
 end
 
 local function container_size(container_name, source_state)
@@ -316,6 +529,18 @@ end
 local function item_allowed(container_name, item_id, source_state)
     local def = PDTI.items[item_id]
     if not def then return false, "unknown item definition" end
+    if container_name == "pouch" then
+        local pouch = get_equipment_definition("pouch", source_state)
+        if not pouch or pouch.missing then return false, "you have no ammo pouch" end
+        if not pouch.items[item_id] then return false, "the ammo pouch only holds loose rounds" end
+        return true
+    end
+    if container_name == "loot_slot" then
+        local slot = get_equipment_definition("loot_slot", source_state)
+        if not slot or slot.missing then return false, "you have no loot slots" end
+        if not slot.items[item_id] then return false, "the loot slots only hold loot bags" end
+        return true
+    end
     local rule_name = RIG_INDEX[container_name] and "rig" or container_name
     if not (def.allowed and def.allowed[rule_name]) then
         return false, "item is not allowed in " .. rule_name
@@ -367,6 +592,10 @@ local function item_weight(item)
     if def.weight_per_round then
         return PDTI.RoundWeight(data.mag_class) * amount
     end
+    if def.weight_by_data and tonumber(data.weight) then
+        -- (A weapon's loaded magazine weighs with it: data.gun_weight.)
+        return (tonumber(data.weight) + math.max(0, tonumber(data.gun_weight) or 0)) * amount
+    end
     return (tonumber(def.weight) or 0) * amount
 end
 PDTI.ItemWeight = item_weight
@@ -387,15 +616,42 @@ local function total_weight(source_state)
     local src = source_state or state
     local total = 0
     for _, name in ipairs(PDTI.CONTAINERS) do
-        total = total + container_weight(name, src)
+        if not PDTI.STORAGE[name] then total = total + container_weight(name, src) end
     end
     return total
 end
 
+-- The rig has no weight cap (0.21.1): what it holds is limited by its slots,
+-- and its weight still slows you like everything else you carry.
 local function container_weight_limit(container_name, source_state)
+    if RIG_INDEX[container_name] then return math.huge end
     local def = get_equipment_definition(container_name, source_state)
     return def and tonumber(def.max_weight) or math.huge
 end
+
+-- "the rig's Ammunition section is full by weight: 13.5 + 4.5 kg, at most
+-- 14 kg" (what the screen says when the weight refuses an item).
+local function weight_refusal(container_name, adding, source_state)
+    local def = get_equipment_definition(container_name, source_state)
+    local where = container_name
+    if RIG_INDEX[container_name] then
+        where = "the rig's " .. tostring(def and def.name or "") .. " section"
+    elseif container_name == "backpack" or container_name == "pockets" then
+        where = "the " .. container_name
+    elseif container_name == "pouch" then
+        where = "the ammo pouch"
+    elseif container_name == "loot_slot" then
+        where = "the loot slots"
+    end
+    return string.format("%s is full by weight: %.1f + %.1f kg, at most %g kg", where,
+        container_weight(container_name, source_state), adding or 0,
+        container_weight_limit(container_name, source_state))
+end
+PDTI.WeightRefusal = weight_refusal
+
+-- True while a save is read: a weapon in a hand stays there even if the game
+-- could not say yet whether it is unlocked.
+local loading = false
 
 local function placement_check(container_name, ref, x, y, rotated, ignore_id, source_state)
     local item_id, item_data = item_ref(ref)
@@ -404,11 +660,33 @@ local function placement_check(container_name, ref, x, y, rotated, ignore_id, so
     if not src.containers[container_name] then return false, "container data missing" end
 
     local gun_slot = PDTI.GUN_SLOTS[container_name]
-    if gun_slot then
-        -- Only a magazine of this weapon, one (two for akimbo guns).
+    local hand = PDTI.HAND_SLOTS[container_name]
+    if hand then
+        -- One weapon of this hand's kind (a primary or a secondary).
+        if item_id ~= "weapon" or type(item_data) ~= "table" or item_data.category ~= hand then
+            return false, hand == "primaries" and "only a primary weapon goes here" or "only a secondary weapon goes here"
+        end
+        for _, other in ipairs(src.containers[container_name].items) do
+            if other.instance_id ~= ignore_id then return false, "this hand already holds a weapon" end
+        end
+        local check = PDTI.HandCheck
+        if not loading and type(check) == "function" then
+            local ok, why = check(item_data)
+            if not ok then return false, why end
+        end
+    elseif gun_slot then
+        -- Only a magazine of the weapon in this slot, one (two for akimbo
+        -- guns). plan.lua knows the weapon (PDTI.GunSlotAccepts).
         local magazine = PDTI.Ammo and PDTI.Ammo.MAGAZINE_ITEM or "spare_magazine"
-        if item_id ~= magazine or type(item_data) ~= "table" or item_data.slot ~= gun_slot then
+        if item_id ~= magazine or type(item_data) ~= "table" then
             return false, "only a magazine of this weapon goes here"
+        end
+        local accepts = PDTI.GunSlotAccepts
+        if type(accepts) ~= "function" then
+            if item_data.slot ~= gun_slot then return false, "only a magazine of this weapon goes here" end
+        elseif not loading then
+            local ok, why = accepts(gun_slot, item_data)
+            if not ok then return false, why or "only a magazine of this weapon goes here" end
         end
         local others = 0
         for _, other in ipairs(src.containers[container_name].items) do
@@ -470,7 +748,17 @@ local function place_anywhere(src, item, names)
     return nil
 end
 
+local sanitize_loaded_inner
+
 local function sanitize_loaded(data)
+    loading = true
+    local ok, result = pcall(sanitize_loaded_inner, data)
+    loading = false
+    if not ok then error(result) end
+    return result
+end
+
+sanitize_loaded_inner = function(data)
     local clean = new_state()
     if type(data) ~= "table" then return clean end
 
@@ -515,6 +803,21 @@ local function sanitize_loaded(data)
         for kind, equipment_id in pairs(data.unresolved_equipment) do
             if (kind == "backpack" or kind == "rig") and type(equipment_id) == "string" then
                 clean.unresolved_equipment[kind] = equipment_id
+            end
+        end
+    end
+    -- The room bonuses come before the items: a row a room adds must be
+    -- there when the items are put back.
+    if type(data.perks) == "table" then
+        for piece, room in pairs(data.perks) do
+            if type(piece) == "string" and type(room) == "string" then clean.perks[piece] = room end
+        end
+    end
+    if type(data.room_tiers) == "table" then
+        for room, tier in pairs(data.room_tiers) do
+            tier = tonumber(tier)
+            if type(room) == "string" and tier and tier >= 1 and tier <= 3 and tier % 1 == 0 then
+                clean.room_tiers[room] = tier
             end
         end
     end
@@ -566,7 +869,7 @@ local function sanitize_loaded(data)
                     local x, y = tonumber(item.x), tonumber(item.y)
                     local amount = math.floor(tonumber(item.amount) or 1)
                     local def = PDTI.items[item.item_id]
-                    local max_stack = def and math.max(1, math.floor(tonumber(def.max_stack) or 1)) or 999
+                    local max_stack = def and item_max_stack(def, item.data) or 999
                     local rotated = item.rotated == true
                     local extra = 0
                     if def and amount > max_stack and amount <= 100000 then
@@ -648,6 +951,18 @@ local function save()
     end
 
     state.schema_version = PDTI.SCHEMA_VERSION
+    -- The room tiers the game has now go with the save (perks.lua): a room
+    -- bonus must still be there when the save is read before the safehouse.
+    local perks = PDTI.Perks
+    local live = perks and perks.LiveTiers and perks.LiveTiers()
+    if live then
+        state.room_tiers = state.room_tiers or {}
+        for room, tier in pairs(live) do
+            if tier >= 1 and tier <= 3 and tier > (tonumber(state.room_tiers[room]) or 0) then
+                state.room_tiers[room] = tier
+            end
+        end
+    end
     local ok, encoded = pcall(json.encode, state)
     if not ok or type(encoded) ~= "string" then
         log("Could not encode inventory save")
@@ -820,6 +1135,19 @@ function PDTI.FindItems(predicate)
     return out
 end
 
+-- The first item (container order, then slot order) the predicate accepts:
+-- container name, item. Same walk as FindItems, without the lists.
+function PDTI.FindFirstItem(predicate)
+    if type(predicate) ~= "function" then return nil end
+    for _, name in ipairs(PDTI.CONTAINERS) do
+        local items = state.containers[name] and state.containers[name].items
+        for _, item in ipairs(items or {}) do
+            if predicate(name, item) then return name, item end
+        end
+    end
+    return nil
+end
+
 function PDTI.GetItemDefinitions()
     return copy_table(PDTI.items)
 end
@@ -883,10 +1211,22 @@ function PDTI.ItemSize(ref, rotated, container_name)
 end
 
 -- Would PDTI.MoveItem work? Checks the place and the weight, changes nothing.
+-- In a heist the locker stays at home; the weapon slots change (an empty
+-- one is no weapon in your hands).
+local function storage_locked(from_name, to_name)
+    if PDTI.session_only and (from_name == "locker" or to_name == "locker") then
+        return "the locker stays at home during a heist"
+    end
+    return nil
+end
+PDTI.StorageLocked = storage_locked
+
 function PDTI.CanMoveItem(from_name, instance_id, to_name, x, y, rotated)
     if not valid_container_name(from_name) or not valid_container_name(to_name) then
         return false, "unknown container"
     end
+    local locked = storage_locked(from_name, to_name)
+    if locked then return false, locked end
     local item
     for _, it in ipairs(state.containers[from_name].items) do
         if it.instance_id == instance_id then item = it break end
@@ -896,7 +1236,7 @@ function PDTI.CanMoveItem(from_name, instance_id, to_name, x, y, rotated)
     if not ok then return false, reason end
     if to_name ~= from_name
         and container_weight(to_name) + item_weight(item) > container_weight_limit(to_name) then
-        return false, "destination container weight limit exceeded"
+        return false, weight_refusal(to_name, item_weight(item))
     end
     return true
 end
@@ -933,7 +1273,7 @@ function PDTI.AddItem(container_name, item_id, x, y, rotated, amount, item_data)
     local def = PDTI.items[item_id]
     if not def then return false, "unknown item" end
     local count = math.floor(tonumber(amount) or 1)
-    local max_stack = math.max(1, math.floor(tonumber(def.max_stack) or 1))
+    local max_stack = item_max_stack(def, item_data)
     if count < 1 or count > max_stack then return false, "invalid stack amount" end
 
     local ok, reason = placement_check(container_name, { item_id = item_id, data = item_data }, x, y, rotated)
@@ -942,7 +1282,7 @@ function PDTI.AddItem(container_name, item_id, x, y, rotated, amount, item_data)
     local weight_after = container_weight(container_name)
         + item_weight({ item_id = item_id, amount = count, data = item_data })
     if weight_after > container_weight_limit(container_name) then
-        return false, "container weight limit exceeded"
+        return false, weight_refusal(container_name, weight_after - container_weight(container_name))
     end
 
     local instance = {
@@ -1033,7 +1373,7 @@ function PDTI.EditItems(spec)
         local amount = math.floor(tonumber(change.amount) or 0)
         if amount < 1 then return fail("invalid stack amount") end
         local def = PDTI.items[items[i].item_id]
-        local max_stack = math.max(1, math.floor(tonumber(def and def.max_stack) or 1))
+        local max_stack = item_max_stack(def, items[i].data)
         if amount > max_stack then return fail("stack amount is above the limit") end
         items[i].amount = amount
     end
@@ -1106,7 +1446,7 @@ function PDTI.MergeStacks(container_name, source_id, target_id, amount)
     end
 
     local def = PDTI.items[source.item_id]
-    local max_stack = math.max(1, math.floor(tonumber(def.max_stack) or 1))
+    local max_stack = item_max_stack(def, target.data)
     local available = math.max(0, max_stack - (target.amount or 1))
     local requested = math.floor(tonumber(amount) or (source.amount or 1))
     if requested < 1 then return false, "invalid merge amount" end
@@ -1173,6 +1513,8 @@ function PDTI.MoveItem(from_name, instance_id, to_name, x, y, rotated)
     if not valid_container_name(from_name) or not valid_container_name(to_name) then
         return false, "unknown container"
     end
+    local locked = storage_locked(from_name, to_name)
+    if locked then return false, locked end
     local source = state.containers[from_name].items
     local index, item
     for i = 1, #source do
@@ -1193,7 +1535,7 @@ function PDTI.MoveItem(from_name, instance_id, to_name, x, y, rotated)
     local new_weight = container_weight(to_name) + item_weight(item)
     if new_weight > container_weight_limit(to_name) then
         table.insert(source, index, item)
-        return false, "destination container weight limit exceeded"
+        return false, weight_refusal(to_name, item_weight(item))
     end
 
     item.x, item.y, item.rotated = x, y, rotated == true
@@ -1213,6 +1555,8 @@ function PDTI.MoveItem(from_name, instance_id, to_name, x, y, rotated)
     return true, copy_table(item), old
 end
 
+local refit_and_save
+
 -- Changes the backpack or the rig. Everything that was in it stays where it
 -- was when it still fits there; the rest is put where it fits: in the new
 -- equipment first, then in the other containers. When something does not
@@ -1225,8 +1569,14 @@ function PDTI.SetEquipment(kind, equipment_id)
 
     local candidate = copy_table(state)
     candidate.equipment[kind] = equipment_id
-    local affected = kind == "rig" and PDTI.RIG_SECTIONS or { "backpack" }
+    local affected = kind == "rig" and PDTI.RIG_SECTIONS or { "backpack", "loot_slot" }
+    return refit_and_save(candidate, affected, "cannot equip", "equipment change")
+end
 
+-- Puts back what was in the affected containers of a candidate state (the
+-- equipment or its room bonus changed): where it was when it still fits,
+-- else where it fits. Saves it; nothing changes when something has no room.
+refit_and_save = function(candidate, affected, refuse, what)
     -- Take out what was in the old equipment.
     local moving = {}
     for _, name in ipairs(affected) do
@@ -1256,7 +1606,7 @@ function PDTI.SetEquipment(kind, equipment_id)
     for _, item in ipairs(rest) do
         if not place_anywhere(candidate, item, order) then
             local item_def = PDTI.items[item.item_id]
-            return false, "cannot equip: no room for " .. tostring(item_def and item_def.name or item.item_id)
+            return false, refuse .. ": no room for " .. tostring(item_def and item_def.name or item.item_id)
         end
     end
 
@@ -1264,9 +1614,50 @@ function PDTI.SetEquipment(kind, equipment_id)
     state = candidate
     if not save() then
         state = previous
-        return false, "could not save inventory; equipment change rolled back"
+        return false, "could not save inventory; " .. what .. " rolled back"
     end
     return true
+end
+
+-- The perk part of the inventory (read only): { perks, room_tiers }.
+function PDTI.PerkState()
+    return state
+end
+
+-- Room tiers the game has now: remembered when higher than the saved ones.
+function PDTI.NoteRoomTiers(tiers)
+    if type(tiers) ~= "table" then return false end
+    state.room_tiers = state.room_tiers or {}
+    local changed = false
+    for room, tier in pairs(tiers) do
+        tier = tonumber(tier)
+        if type(room) == "string" and tier and tier >= 1 and tier <= 3
+            and tier > (tonumber(state.room_tiers[room]) or 0) then
+            state.room_tiers[room] = tier
+            changed = true
+        end
+    end
+    if changed then save() end
+    return changed
+end
+
+-- Picks a room's option for a piece (room nil: none). The rig and the
+-- backpack are fitted again: a row the old option gave may be gone.
+function PDTI.SetPerkChoice(piece, room)
+    local perks = PDTI.Perks
+    if not perks or not perks.PIECES[piece] then return false, "unknown piece" end
+    if room ~= nil then
+        local why = perks.WhyLocked(piece, room, state)
+        if why then return false, why end
+    end
+    local candidate = copy_table(state)
+    candidate.perks = candidate.perks or {}
+    candidate.perks[piece] = room
+    local affected = {}
+    for _, name in ipairs(PDTI.RIG_SECTIONS) do affected[#affected + 1] = name end
+    affected[#affected + 1] = "backpack"
+    affected[#affected + 1] = "loot_slot"
+    return refit_and_save(candidate, affected, "cannot change the bonus", "bonus change")
 end
 
 
@@ -1276,18 +1667,21 @@ function PDTI.GetDeployable()
     return state.deployable
 end
 
+-- Sets the pick and saves; a failed save puts the old pick back.
+local function commit_deployable(item_id)
+    local previous = state.deployable
+    state.deployable = item_id
+    if not save() then
+        state.deployable = previous
+        return false, "could not save inventory; deployable change rolled back"
+    end
+    return true
+end
+
 -- Picks the deployable. Passing nil clears the pick and gives the deploy
 -- back to the game.
 function PDTI.SetDeployable(item_id)
-    if item_id == nil then
-        local previous = state.deployable
-        state.deployable = nil
-        if not save() then
-            state.deployable = previous
-            return false, "could not save inventory; deployable change rolled back"
-        end
-        return true
-    end
+    if item_id == nil then return commit_deployable(nil) end
 
     if type(item_id) ~= "string" or item_id == "" then
         return false, "expected an item id"
@@ -1301,14 +1695,7 @@ function PDTI.SetDeployable(item_id)
     if not def.deployable then
         return false, (def.name or item_id) .. " is not a deployable"
     end
-
-    local previous = state.deployable
-    state.deployable = item_id
-    if not save() then
-        state.deployable = previous
-        return false, "could not save inventory; deployable change rolled back"
-    end
-    return true
+    return commit_deployable(item_id)
 end
 
 
@@ -1461,8 +1848,9 @@ function PDTI.GetEquipmentOptions(kind)
     local group = kind == "backpack" and PDTI.equipment.backpacks or PDTI.equipment.rigs
     local out = {}
     for id, def in pairs(group or {}) do
+        local shown = perked(kind == "backpack" and "backpacks" or "rigs", id) or def
         out[#out + 1] = { id = id, name = def.name or id, short = def.short or def.name or id,
-            description = def.description }
+            description = shown.description }
     end
     -- Small to large / by name.
     table.sort(out, function(a, b)
@@ -1526,7 +1914,12 @@ function PDTI.GetInventoryViewModel()
             rig_3 = PDTI.GetContainerInfo("rig_3"),
             backpack = PDTI.GetContainerInfo("backpack"),
             gun_primary = PDTI.GetContainerInfo("gun_primary"),
-            gun_secondary = PDTI.GetContainerInfo("gun_secondary")
+            gun_secondary = PDTI.GetContainerInfo("gun_secondary"),
+            pouch = PDTI.GetContainerInfo("pouch"),
+            loot_slot = PDTI.GetContainerInfo("loot_slot"),
+            hand_primary = PDTI.GetContainerInfo("hand_primary"),
+            hand_secondary = PDTI.GetContainerInfo("hand_secondary"),
+            locker = PDTI.GetContainerInfo("locker")
         },
         -- The sections the equipped rig has, in order.
         rig_sections = rig_section_list(),
@@ -1540,7 +1933,12 @@ function PDTI.GetInventoryViewModel()
             rig_3 = PDTI.GetOccupancyMap("rig_3"),
             backpack = PDTI.GetOccupancyMap("backpack"),
             gun_primary = PDTI.GetOccupancyMap("gun_primary"),
-            gun_secondary = PDTI.GetOccupancyMap("gun_secondary")
+            gun_secondary = PDTI.GetOccupancyMap("gun_secondary"),
+            pouch = PDTI.GetOccupancyMap("pouch"),
+            loot_slot = PDTI.GetOccupancyMap("loot_slot"),
+            hand_primary = PDTI.GetOccupancyMap("hand_primary"),
+            hand_secondary = PDTI.GetOccupancyMap("hand_secondary"),
+            locker = PDTI.GetOccupancyMap("locker")
         },
         version = PDTI.VERSION,
         schema_version = PDTI.SCHEMA_VERSION

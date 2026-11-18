@@ -35,7 +35,8 @@ function PDTI.SetUIVisible(visible)
 end
 
 function PDTI.SelectContainer(name)
-    if not (name == "pockets" or name == "backpack" or (PDTI.IsRigSection and PDTI.IsRigSection(name))) then
+    if not (name == "pockets" or name == "backpack" or name == "pouch" or name == "loot_slot"
+        or (PDTI.IsRigSection and PDTI.IsRigSection(name))) then
         return false, "unknown container"
     end
     ui.selected_container = name
@@ -80,6 +81,8 @@ end
 -- In a heist: the player is spawned, or the heist has loaded (the briefing
 -- counts too: nothing is saved there either).
 function PDTI.InHeist()
+    -- The safehouse is your base: the screen is the menu's there.
+    if PDTI.InSafehouse() then return false end
     if PDTI.session_only then return true end
     local ok, unit = pcall(function() return managers.player:player_unit() end)
     return ok and unit ~= nil

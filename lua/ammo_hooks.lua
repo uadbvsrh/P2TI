@@ -19,10 +19,7 @@ local dropped = {}      -- magazines that lie on the floor
 local holster = nil     -- "refill" or "pickup": the weapon is put away
 local hooks_installed = false
 
-local function log(message)
-    local line = "[PDTI AMMO] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI AMMO")
 
 local function L(id, fallback)
     local loc = managers and managers.localization
@@ -95,6 +92,7 @@ local function mag_entered(wep)
 end
 
 local function reload_interrupted(wep)
+    wep._pdti_unload = nil
     wep._issr_in_reload = nil
     wep._issr_reload_dropped = nil
 
@@ -122,20 +120,197 @@ local function reload_started(wep)
     wep._issr_in_reload = true
     wep._issr_reload_dropped = nil
     wep._issr_drop_count = 0
+    -- A gun without a magazine has none to take out or drop.
+    wep._pdti_started_empty = Ammo.GunWithoutMagazine(wep) or nil
 end
 
 -- The old magazine leaves the gun. Without NQR the mod decides whether it
--- really hits the floor.
+-- really hits the floor: with a magazine-drop mod (drop_magazine_object) its
+-- drop is used, otherwise the mod's own (Ammo.OwnDrop).
 local function mag_out_drop(wep)
-    if rawget(_G, "NQR") ~= nil or wep._issr_reload_dropped then return end
-    if not wep.drop_magazine_object then return end
-    pcall(wep.drop_magazine_object, wep)
+    if rawget(_G, "NQR") ~= nil or wep._issr_reload_dropped or wep._pdti_started_empty then return end
+    if wep.drop_magazine_object then
+        pcall(wep.drop_magazine_object, wep)
+    elseif Ammo.OwnDrop then
+        local ok, err = pcall(Ammo.OwnDrop, wep)
+        if not ok then log("the magazine could not be dropped: " .. tostring(err)) end
+    end
 end
 
 -------------------------------------------------------------- the reload
 
 -- Forgets the taps of a reload (it ended or was interrupted).
-local function clear_taps(wep)
+local clear_taps
+
+local show_hint = PDTI.Hint
+
+-- The player timer's time (it stops while paused), or nil.
+local function player_time()
+    local ok, now = pcall(function() return managers.player:player_timer():time() end)
+    return ok and now or nil
+end
+
+local function current_state()
+    local ok, state = pcall(function() return managers.player:player_unit():movement():current_state() end)
+    return ok and state or nil
+end
+
+-- "gun" was chosen with the wheel and R pressed: the reload animation runs
+-- until the magazine leaves the gun, then it stops. The magazine goes into
+-- the inventory and the gun has none.
+local function finish_unload(state, wep, t)
+    wep._pdti_unload = nil
+    wep._issr_mag_left_rounds = nil
+    wep._issr_drop_count = 0
+    local ok = Ammo.Unload(wep)
+    if not ok then show_hint("No room for the magazine: it stays in the gun") end
+    state = state or current_state()
+    if state and state._interupt_action_reload then
+        pcall(state._interupt_action_reload, state, t)
+        pcall(function() state._ext_camera:play_redirect(state:get_animation("idle")) end)
+    end
+    if clear_taps then clear_taps(wep) end
+    Ammo.MarkPanelDirty()
+    return ok
+end
+Ammo.FinishUnload = finish_unload
+
+-- How long the panel stays up after the wheel turned.
+Ammo.CHOICE_SHOW = 2
+
+-- Which way the wheel turned this frame: 1 down (the next magazine), -1 up,
+-- nil when it did not turn. The wheel is read from the mouse itself (as BLT
+-- reads its keybinds): the game does not always pass it on as a key.
+local function wheel_dir()
+    local function pressed(name)
+        local ok, v = pcall(function() return Input:mouse():pressed(Idstring(name)) end)
+        return ok and v and true or false
+    end
+    if pressed("mouse wheel up") then return -1 end
+    if pressed("mouse wheel down") then return 1 end
+    return nil
+end
+Ammo.WheelDir = wheel_dir
+
+-- Keys that do something other than move: they stop loading a magazine.
+-- Moving, jumping, crouching, sprinting and the stats screen do not.
+Ammo.ACTION_KEYS = {
+    "btn_primary_attack_press", "btn_steelsight_press", "btn_reload_press", "btn_melee_press",
+    "btn_throw_grenade_press", "btn_projectile_press", "btn_interact_press", "btn_interact_secondary_press",
+    "btn_use_item_press", "btn_switch_weapon_press", "btn_primary_choice", "btn_weapon_gadget_press",
+    "btn_weapon_firemode_press", "btn_cash_inspect_press"
+}
+
+function Ammo.ActionPressed(input)
+    if type(input) ~= "table" then return false end
+    for _, key in ipairs(Ammo.ACTION_KEYS) do
+        if input[key] then return true end
+    end
+    -- The mouse wheel chooses magazines: an action too.
+    local ok, dir = pcall(wheel_dir)
+    return ok and dir ~= nil
+end
+
+-- Typing in the chat or using a menu: the wheel is not ours.
+local function wheel_free()
+    if PDTI.IsUIOpen and PDTI.IsUIOpen() then return false end
+    local ok, chat = pcall(function() return managers.hud:chat_focus() end)
+    if ok and chat then return false end
+    return true
+end
+
+local function busy(state)
+    local function call(name)
+        local fn = state[name]
+        if type(fn) ~= "function" then return false end
+        local ok, v = pcall(fn, state)
+        return ok and v and true or false
+    end
+    return call("_is_reloading") or call("_changing_weapon") or call("_is_meleeing") or call("_interacting")
+        or call("_is_throwing_projectile") or call("is_shooting_count") or state._use_item_expire_t ~= nil
+end
+
+-- The wheel (the game's "switch weapon") chooses the next magazine of a
+-- weapon fed from magazines. The keys 1 and 2 still change the weapon.
+-- During a reload the wheel does nothing.
+function Ammo.HandleWheel(state, input, t)
+    if not input then return false end
+    if not Ammo.On() or Ammo.settings.wheel_choose == false then return false end
+    local dir = wheel_dir()
+    if not dir or not wheel_free() then return false end
+    local wep = Ammo.EquippedBase()
+    if not wep or Ammo.SkipWeapon(wep) or Ammo.NoReload(wep) then return false end
+    if Ammo.IsLooseFed(wep) then
+        -- A shotgun tube: the wheel chooses the next kind of shell.
+        local info = Ammo.Identify(wep)
+        if not info or info.family ~= "shell" then return false end
+        input.btn_switch_weapon_press = nil
+        local id = Ammo.CycleShell(wep, dir)
+        if id then
+            show_hint("Next shell: " .. Ammo.BulletName(id, "shell"))
+            Ammo.panel_until = (tonumber(t) or 0) + Ammo.CHOICE_SHOW
+            pcall(Ammo.SetPanel, true)
+        end
+        return true
+    end
+    -- The wheel turned: it does not switch the weapon (a key bound to
+    -- "switch weapon" still does, since the wheel did not turn then).
+    input.btn_switch_weapon_press = nil
+    local reloading = wep._issr_in_reload or (state._state_data and (state._state_data.reload_expire_t
+        or state._state_data.reload_enter_expire_t))
+    if reloading then return true end
+    if Ammo.CycleChoice(wep, dir) then
+        Ammo.panel_until = (tonumber(t) or 0) + Ammo.CHOICE_SHOW
+        pcall(Ammo.SetPanel, true)
+    end
+    return true
+end
+
+-- A tap of R that does what the wheel chose: take the magazine out of the
+-- gun, or load a chosen magazine even into a full gun. Returns true when it
+-- handled the tap.
+function Ammo.ChosenReload(state, t, wep)
+    local info = Ammo.Identify(wep)
+    if not info or info.loose_fed or Ammo.NoReload(wep) then return false end
+    local choice = Ammo.CurrentChoice(wep)
+    if choice == "gun" then
+        if busy(state) then return true end
+        local places, why = Ammo.UnloadPlaces(wep)
+        if not places and why == "none" then
+            -- The slot may not show the gun's magazine yet (a weapon just
+            -- put into your hands): once more after a sync.
+            pcall(Ammo.SyncGunSlot, wep)
+            places, why = Ammo.UnloadPlaces(wep)
+        end
+        if not places then
+            -- "none": the gun has a magazine but its slot holds something
+            -- else (another weapon's magazine put there).
+            show_hint(why == "none" and "The weapon's magazine slot holds another magazine: move it out first"
+                or "No room for the magazine in the rig, pockets or backpack")
+            return true
+        end
+        wep._pdti_unload = true
+        pcall(state._start_action_reload_enter, state, t)
+        local data = state._state_data or {}
+        if not (data.reload_expire_t or data.reload_enter_expire_t) then wep._pdti_unload = nil end
+        return true
+    end
+    -- A magazine chosen on purpose goes in even when the gun is full (the
+    -- game would not reload a full gun).
+    if choice and Ammo.selection[info.key] == choice and not busy(state) then
+        local ok, full = pcall(function()
+            if wep.clip_full then return wep:clip_full() end
+            return wep:get_ammo_remaining_in_clip() >= wep:get_ammo_max_per_clip()
+        end)
+        if ok and full then
+            pcall(state._start_action_reload_enter, state, t)
+            return true
+        end
+    end
+    return false
+end
+
+function clear_taps(wep)
     wep._pdti_dump = nil
     wep._pdti_fast_mul = nil
     wep._pdti_taps = nil
@@ -213,11 +388,12 @@ local function akimbo_reload(self, orig, info, ...)
     local stay = {}
     for i, mag in ipairs(old) do
         if i <= math.min(#new, give_back) then
+            -- Old magazines are listed only when none fell to the floor (no
+            -- "Drop My Mag"): even a fast reload keeps them then.
             if mode == "dump" then
-                log(string.format("akimbo fast reload: a magazine was dropped with %d round(s)", mag.rounds))
-            else
-                Ammo.ReturnMagazine(self, mag.rounds, mag.spec)
+                log(string.format("akimbo fast reload: no magazine could be dropped, %d round(s) kept", mag.rounds))
             end
+            Ammo.ReturnMagazine(self, Ammo.EjectRounds(self, mag.rounds), mag.spec)
         else
             stay[#stay + 1] = mag
         end
@@ -269,6 +445,10 @@ end
 local function make_on_reload_hook(orig)
     local function hook(self, ...)
         if Ammo.SkipWeapon(self) then return orig(self, ...) end
+        if self._pdti_unload then
+            finish_unload(nil, self, nil)
+            return
+        end
 
         local info = Ammo.Identify(self)
         if not info then return orig(self, ...) end
@@ -281,7 +461,18 @@ local function make_on_reload_hook(orig)
             local before = self:get_ammo_remaining_in_clip()
             local ret = orig(self, ...)
             local loaded = self:get_ammo_remaining_in_clip() - before
-            if loaded > 0 then
+            if loaded > 0 and info.family == "shell" then
+                -- Shells of the chosen kind go in on top (the last one in is
+                -- fired first).
+                local wanted = Ammo.selection[info.key]
+                local _, used = Ammo.LoadShells(self, before, loaded)
+                if wanted and used[1] and used[1][1] ~= wanted then
+                    show_hint(string.format("No %s left: loading %s", Ammo.BulletName(wanted, "shell"),
+                        Ammo.BulletName(used[1][1], "shell")))
+                    Ammo.selection[info.key] = nil
+                end
+                Ammo.ApplyLoaded(self)
+            elseif loaded > 0 then
                 local taken = Ammo.ConsumeLooseKey(info.key, loaded)
                 if taken < loaded then self:set_ammo_remaining_in_clip(before + taken) end
             end
@@ -325,11 +516,20 @@ local function make_on_reload_hook(orig)
             local actual = self._issr_mag_left_rounds
             if actual == nil then actual = math.max(0, clip - chamber) end
             if self._pdti_dump then
-                -- R tapped twice: the magazine is dropped with its rounds.
-                log(string.format("fast reload: the magazine was dropped with %d round(s)", actual))
-            elseif Ammo.MustSwap(self) then
+                -- R tapped twice, but no magazine fell (the game drops
+                -- magazines as objects only with a mod such as "Drop My
+                -- Mag"): there is nothing to pick up, so it is kept.
+                log(string.format("fast reload: no magazine could be dropped, %d round(s) kept", actual))
+            end
+            -- A skill can fill the old magazine (Bulletstorm ace): the next one
+            -- is taken out first, so the reload does not load it again.
+            local refilled = Ammo.EjectRounds(self, actual)
+            if Ammo.MustSwap(self) then
                 -- No free place: the old magazine goes where the new one was.
-                next_mag = Ammo.SwapMagazine(self, actual)
+                next_mag = Ammo.SwapMagazine(self, refilled)
+            elseif refilled ~= actual then
+                next_mag = Ammo.TakeMagazine(self)
+                Ammo.ReturnMagazine(self, refilled)
             else
                 -- The magazine that was in the gun goes back into the inventory.
                 Ammo.ReturnMagazine(self, actual)
@@ -378,6 +578,9 @@ local function make_drop_hook(orig)
     local function hook(self, ...)
         if Ammo.SkipWeapon(self) then return orig(self, ...) end
 
+        -- The magazine taken out goes into the inventory, not on the floor.
+        if self._pdti_unload then return end
+
         -- Without NQR this mod decides whether a magazine is dropped: only
         -- during a reload, at most once per reload, and only as far as the
         -- drop mode allows.
@@ -388,23 +591,47 @@ local function make_drop_hook(orig)
             local mode = math.max(0, math.min(2, math.floor((Ammo.settings.drop_mode or 1) + 0.5)))
             local rounds = math.max(self:get_ammo_remaining_in_clip() - Ammo.ChamberOf(self), 0)
 
-            if mode == 0 or (mode == 1 and rounds > 0) then return end
+            -- A fast reload throws the magazine away whatever the drop mode.
+            if not self._pdti_dump and (mode == 0 or (mode == 1 and rounds > 0)) then return end
 
             self._issr_reload_dropped = true
         end
 
-        local mags = managers.enemy and managers.enemy._magazines
-        local before = mags and #mags or 0
-        local ret = orig(self, ...)
+        -- What falls is caught where the game registers it (add_magazine),
+        -- not by the length of its list: at the game's limit of magazines on
+        -- the floor the oldest are removed and the list is replaced.
+        local em = managers.enemy
+        local added = {}
+        local own_add = em and rawget(em, "add_magazine")
+        local real_add = em and em.add_magazine
+        if real_add then
+            em.add_magazine = function(m, mag, col, ...)
+                added[#added + 1] = { mag, col }
+                return real_add(m, mag, col, ...)
+            end
+        end
+        local function restore()
+            if real_add then em.add_magazine = own_add end
+        end
 
-        if mags then
+        local ok, ret = pcall(orig, self, ...)
+        if not ok then log("dropping the magazine failed: " .. tostring(ret)); ret = nil end
+
+        -- The game's own drop_magazine_object (or another mod's) may drop
+        -- nothing for the player's gun: the mod drops it itself then.
+        if #added == 0 and orig ~= Ammo.FallbackDrop and Ammo.FallbackDrop then
+            local ok2, err = pcall(Ammo.FallbackDrop, self)
+            if not ok2 then log("the magazine could not be dropped: " .. tostring(err)) end
+        end
+        restore()
+
+        if #added > 0 then
             local rounds = math.max(self:get_ammo_remaining_in_clip() - Ammo.ChamberOf(self), 0)
             local info = Ammo.Identify(self)
             local loaded = info and info.typed and Ammo.LoadedSpec(self)
 
             if info then
-                for i = before + 1, #mags do
-                    local entry = mags[i]
+                for _, entry in ipairs(added) do
                     local col_unit = entry[2]
 
                     if alive(col_unit) then
@@ -421,6 +648,9 @@ local function make_drop_hook(orig)
                             akimbo = info.akimbo,
                             name_id = self._name_id,
                             typed = info.typed,
+                            sized = info.sized,
+                            family = info.family,
+                            factory_id = info.factory_id,
                             base_capacity = info.capacity,
                             size = loaded and loaded.size,
                             bullet = loaded and loaded.bullet,
@@ -440,11 +670,12 @@ local function make_drop_hook(orig)
     return hook
 end
 
+
 local function make_stage_hook(orig)
     return function(self, t)
         local ret = orig(self, t)
 
-        if not Ammo.settings.enabled or Ammo.SkipWeapon(self) then return ret end
+        if not Ammo.On() or Ammo.SkipWeapon(self) then return ret end
 
         local cycle = self.r_cycle
         local stage = self.r_stage
@@ -453,7 +684,9 @@ local function make_stage_hook(orig)
         if name ~= self._issr_stage then
             self._issr_stage = name
 
-            if name == "r_mag_out" then
+            if name == "r_mag_out" and self._pdti_unload then
+                finish_unload(nil, self, player_time())
+            elseif name == "r_mag_out" then
                 mag_left(self)
             elseif name == "r_get_new_mag_in" then
                 mag_entered(self)
@@ -466,7 +699,9 @@ end
 
 local function make_can_reload_hook(orig)
     return function(self, ...)
-        if Ammo.settings.enabled and not Ammo.SkipWeapon(self) then
+        -- Taking the magazine out needs no magazine to load.
+        if self._pdti_unload then return true end
+        if Ammo.On() and not Ammo.SkipWeapon(self) then
             Ammo.SyncTotal(self)
             -- A magazine weapon reloads only when there is a magazine with
             -- rounds in the rig or the pockets.
@@ -481,7 +716,7 @@ end
 -- A shotgun loads shell by shell: every shell comes out of the loose rounds.
 local function make_update_reloading_hook(orig)
     return function(self, t, dt, time_left)
-        if not Ammo.settings.enabled or Ammo.SkipWeapon(self) or not Ammo.IsLooseFed(self) then
+        if not Ammo.On() or Ammo.SkipWeapon(self) or not Ammo.IsLooseFed(self) then
             return orig(self, t, dt, time_left)
         end
         local info = Ammo.Identify(self)
@@ -540,6 +775,51 @@ end
 -- enough boxes give a whole grenade.
 Ammo.pickup_carry = Ammo.pickup_carry or {}
 
+-- Ammo boxes give loose rounds up to two full stacks per weapon (all its
+-- bullets counted). With both guns there the boxes stay on the floor.
+Ammo.BOX_STACKS = 2
+function Ammo.BoxLimit()
+    local def = PDTI.items and PDTI.items[Ammo.LOOSE_ITEM or "loose_ammo"]
+    return Ammo.BOX_STACKS * (tonumber(def and def.max_stack) or 100)
+end
+
+function Ammo.BoxRoom(wep)
+    local info = Ammo.Identify(wep)
+    if not info then return math.huge end
+    return math.max(0, Ammo.BoxLimit() - Ammo.LooseOfKey(info.key))
+end
+
+-- Does no gun of the player take rounds from a box any more?
+function Ammo.BoxesFull(unit)
+    local ok, full = pcall(function()
+        local inventory = unit and unit:inventory()
+        if not inventory then return false end
+        local any = false
+        for _, sel in pairs(inventory:available_selections() or {}) do
+            local wep = sel.unit and sel.unit:base()
+            if wep and not Ammo.SkipWeapon(wep) and Ammo.Identify(wep) then
+                any = true
+                if Ammo.BoxRoom(wep) > 0 then return false end
+            end
+        end
+        return any
+    end)
+    return ok and full == true
+end
+
+-- A plain ammo box (not a throwable, not one weapon's arrows) is left on
+-- the floor when both guns are at the limit. (restoration-mod would take it
+-- anyway when your grenades are not full.)
+local function make_box_pickup_hook(orig)
+    return function(self, unit, ...)
+        if Ammo.On() and not self._projectile_id and not self._weapon_category
+            and unit ~= nil and unit == Ammo.PlayerUnit() and Ammo.BoxesFull(unit) then
+            return false
+        end
+        return orig(self, unit, ...)
+    end
+end
+
 -- Picking up ammunition: the rounds become loose ammunition in the inventory.
 local function make_add_ammo_hook(orig)
     return function(self, ratio, add_amount_override)
@@ -553,7 +833,15 @@ local function make_add_ammo_hook(orig)
         Ammo.SyncTotal(self)
 
         local picked_up, amount = false, 0
-        local room = math.max(0, self:get_ammo_max() - self:get_ammo_total())
+        -- The inventory decides how much you can carry (AddLooseKey below).
+        -- A weapon loaded round by round (a launcher, a bow) keeps the game's
+        -- maximum.
+        local room = math.huge
+        if info.loose_fed or Ammo.NoReload(self) then
+            room = math.max(0, self:get_ammo_max() - self:get_ammo_total())
+        end
+        -- Boxes fill the loose rounds of a weapon up to two stacks (0.21.3).
+        if not add_amount_override then room = math.min(room, Ammo.BoxRoom(self)) end
 
         if room > 0 then
             if add_amount_override then
@@ -613,8 +901,13 @@ local function make_bag_hook(orig)
         -- A weapon with magazines: the bag restocks the magazines (their own
         -- bullets, then new full ones). The game's part only for a gadget
         -- (an underbarrel launcher), with what the bag has left.
+        -- restoration-mod: a weapon's _ammo_ratio scales what a share of the
+        -- bag is worth (the game divides by it and returns the share times it).
+        local ratio = tonumber(self._ammo_ratio) or 1
+        if ratio <= 0 then ratio = 1 end
         if not Ammo.IsLooseFed(self) and Ammo.Identify(self) then
-            local used = Ammo.BagRestock(self, available) or 0
+            local used = (Ammo.BagRestock(self, (tonumber(available) or 0) / ratio) or 0) * ratio
+            used = math.max(0, math.min(tonumber(available) or 0, used))
             local rest = math.max(0, (tonumber(available) or 0) - used)
             local gadget = 0
             if rest > 0 then
@@ -622,7 +915,7 @@ local function make_bag_hook(orig)
                 local total = self:get_ammo_total()
                 self:set_ammo_total(self:get_ammo_max())
                 local ok, r = pcall(orig, self, rest, special)
-                if ok and type(r) == "number" then gadget = r end
+                if ok and type(r) == "number" then gadget = math.max(0, r) end
                 self:set_ammo_total(total)
             end
             Ammo.SyncTotal(self)
@@ -631,9 +924,19 @@ local function make_bag_hook(orig)
             return used + gadget
         end
 
+        -- The inventory can hold more rounds than the game's maximum. The game
+        -- works out what it takes as "1 - total / max": above the maximum that
+        -- is less than nothing, and the bag got MORE uses from it (0.21.3).
+        -- The game sees at most its maximum, and never takes less than nothing.
         local before = self:get_ammo_total()
-        local ret = orig(self, available, special)
-        local added = self:get_ammo_total() - before
+        local max = tonumber(self:get_ammo_max()) or before
+        local seen = math.min(before, max)
+        if seen ~= before then self:set_ammo_total(seen) end
+        local ok, ret = pcall(orig, self, available, special)
+        local added = math.max(0, self:get_ammo_total() - seen)
+        if seen ~= before or not ok then self:set_ammo_total(before + (ok and added or 0)) end
+        if not ok then error(ret, 0) end
+        if type(ret) == "number" and ret < 0 then ret = 0 end
 
         if added > 0 and Ammo.IsLooseFed(self) then
             -- No magazines: the bag's rounds become loose rounds.
@@ -746,7 +1049,7 @@ end
 
 local function make_reload_hook(orig)
     return function(self, t, input)
-        if not Ammo.settings.enabled then
+        if not Ammo.On() then
             self._issr_hold_t = nil
             holster_release("refill")
             if Ammo.IsPanelVisible and Ammo.IsPanelVisible() then Ammo.SetPanel(false) end
@@ -771,7 +1074,11 @@ local function make_reload_hook(orig)
                 local loose = Ammo.LooseOf(wep)
 
                 if not reloading and loose > 0 and Ammo.NeedsFill(wep) then
-                    if holster_start(self, t, "refill") then
+                    -- Fully Loaded ace: from the pouch the gun stays in hand.
+                    if holster ~= "refill" and Ammo.PouchPackAllowed and Ammo.PouchPackAllowed(self, wep) then
+                        Ammo.StartJob(wep)
+                        Ammo.pouch_packing = true
+                    elseif holster_start(self, t, "refill") then
                         if holstered(self, t) then
                             Ammo.StartJob(wep)
                         end
@@ -797,12 +1104,15 @@ local function make_reload_hook(orig)
         self._issr_held_long = nil
         self._issr_hold_logged = nil
 
-        if Ammo.IsPanelVisible and Ammo.IsPanelVisible() and not Ammo.settings.overlay_always then
+        if Ammo.IsPanelVisible and Ammo.IsPanelVisible() and not Ammo.settings.overlay_always
+            and not (Ammo.panel_until and t < Ammo.panel_until) then
             Ammo.SetPanel(false)
         end
 
         if tap then
-            if applicable and Ammo.TryFastReload(self, t, wep, orig) then return true end
+            if applicable and not wep._pdti_unload and Ammo.TryFastReload(self, t, wep, orig) then return true end
+            local reloading = self._state_data and (self._state_data.reload_expire_t or self._state_data.reload_enter_expire_t)
+            if applicable and not reloading and Ammo.ChosenReload(self, t, wep) then return true end
             return orig(self, t, { btn_reload_press = true })
         end
 
@@ -871,29 +1181,150 @@ end
 local function make_reload_speed_hook(orig)
     return function(self, ...)
         local mul = orig(self, ...)
-        if type(mul) ~= "number" or not Ammo.settings.enabled or Ammo.SkipWeapon(self) or Ammo.IsLooseFed(self) then
+        if type(mul) ~= "number" or not Ammo.On() or Ammo.SkipWeapon(self) or Ammo.IsLooseFed(self) then
             return mul
         end
         local factor = 1
-        if self._pdti_fast_mul then
+        if Ammo.GunWithoutMagazine(self) then
+            -- Nothing to take out: the reload skips that part.
+            factor = Ammo.EMPTY_GUN_SPEED
+        elseif self._pdti_fast_mul then
             factor = self._pdti_fast_mul
         elseif Ammo.MustSwap(self) then
             factor = 1 / Ammo.SWAP_SLOWDOWN
         end
         self._pdti_reload_factor = factor
-        local ok, now = pcall(function() return managers.player:player_timer():time() end)
-        self._pdti_reload_t = ok and now or nil
+        self._pdti_reload_t = player_time()
         -- A bigger magazine takes longer to seat (kept out of the factor, so
         -- the tap timing stays right).
         return mul * factor * Ammo.SizeReloadFactor(self)
     end
 end
 
+-- The mod's own magazine drop, for when no magazine-drop mod is installed: a
+-- copy of the gun's magazine part falls in a collision box, as the game does
+-- for other players' magazines (HuskPlayerMovement), and goes into the enemy
+-- manager's list, where the drop hook finds it and pickup works as usual.
+-- Units are spawned only when they are loaded (an unloaded unit would crash
+-- the game).
+local IDS_UNIT = nil
+local function unit_loaded(ids)
+    local ok, has = pcall(function()
+        IDS_UNIT = IDS_UNIT or Idstring("unit")
+        return PackageManager:has(IDS_UNIT, ids)
+    end)
+    return ok and has and true or false
+end
+
+Ammo.MAG_COLLISIONS = {
+    pistol = { "units/payday2/weapons/box_collision/box_collision_small_pistol", "rp_box_collision_small" },
+    smg = { "units/payday2/weapons/box_collision/box_collision_small_smg", "rp_box_collision_small" },
+    rifle = { "units/payday2/weapons/box_collision/box_collision_medium_ar", "rp_box_collision_medium" },
+    large_plastic = { "units/payday2/weapons/box_collision/box_collision_large_plastic", "rp_box_collision_large" },
+    large_metal = { "units/payday2/weapons/box_collision/box_collision_large_metal", "rp_box_collision_large" }
+}
+Ammo.MAG_COLLISIONS.small = Ammo.MAG_COLLISIONS.pistol
+Ammo.MAG_COLLISIONS.medium = Ammo.MAG_COLLISIONS.rifle
+Ammo.MAG_COLLISIONS.large = Ammo.MAG_COLLISIONS.large_metal
+
+-- Which collision box the weapon's magazine falls in: the crew weapon's
+-- (what other players' copies use), otherwise by the weapon's category.
+function Ammo.MagazineCollision(wep)
+    local wtd = tweak_data and tweak_data.weapon
+    local crew = wtd and wep._name_id and wtd[wep._name_id .. "_crew"]
+    local kind = crew and crew.pull_magazine_during_reload
+    if type(kind) == "string" and Ammo.MAG_COLLISIONS[kind] then return kind end
+    local own = wtd and wep._name_id and wtd[wep._name_id]
+    local cats = own and own.categories or {}
+    for _, c in ipairs(cats) do
+        if c == "pistol" then return "pistol" end
+        if c == "smg" then return "smg" end
+        if c == "lmg" or c == "minigun" then return "large_metal" end
+    end
+    return "rifle"
+end
+
+-- The magazine part of the gun (its unit and its unit name).
+function Ammo.MagazinePart(wep)
+    local parts_td = tweak_data and tweak_data.weapon and tweak_data.weapon.factory
+        and tweak_data.weapon.factory.parts
+    if not parts_td or type(wep._parts) ~= "table" then return nil end
+    for part_id, part in pairs(wep._parts) do
+        local td = parts_td[part_id]
+        if td and td.type == "magazine" and part.name and part.unit and alive(part.unit) then
+            return part, part_id, td
+        end
+    end
+    return nil
+end
+
+function Ammo.SpawnMagazineUnit(wep)
+    local part, _, td = Ammo.MagazinePart(wep)
+    if not part then return false, "the weapon has no magazine part" end
+    local col = Ammo.MAG_COLLISIONS[Ammo.MagazineCollision(wep)] or Ammo.MAG_COLLISIONS.rifle
+    local col_ids = Idstring(col[1])
+    if not unit_loaded(part.name) then return false, "the magazine unit is not loaded" end
+    if not unit_loaded(col_ids) then return false, "the collision box is not loaded" end
+
+    local pos, rot = part.unit:position(), part.unit:rotation()
+    local center = pos
+    pcall(function() center = part.unit:oobb():center() end)
+    local mag = World:spawn_unit(part.name, pos, rot)
+    if not mag then return false, "the magazine unit could not be spawned" end
+    local box = World:spawn_unit(col_ids, center, rot)
+    if not box then
+        pcall(function() mag:set_slot(0) end)
+        return false, "the collision box could not be spawned"
+    end
+    box:link(Idstring(col[2]), mag)
+
+    -- An empty magazine shows no rounds.
+    local bullets = td and td.bullet_objects
+    if bullets and Ammo.EmptyOnDrop(wep) then
+        pcall(function()
+            local offset = bullets.offset or 0
+            for i = 1 + offset, bullets.amount + offset do
+                local object = mag:get_object(Idstring(bullets.prefix .. i))
+                if object then object:set_visibility(false) end
+            end
+        end)
+    end
+
+    -- It falls out of the gun, downwards and a little away.
+    pcall(function()
+        local dir = wep._unit:rotation():z() * -math.random(65, 80)
+        box:push(10, dir)
+    end)
+
+    managers.enemy:add_magazine(mag, box)
+    return true
+end
+
+-- Rounds left in the magazine that is dropped (the chambered one stays).
+function Ammo.EmptyOnDrop(wep)
+    local ok, rounds = pcall(function() return wep:get_ammo_remaining_in_clip() - Ammo.ChamberOf(wep) end)
+    return ok and rounds <= 0
+end
+
+local own_drop_failed = {}
+local function own_drop_orig(self)
+    local ok, why = Ammo.SpawnMagazineUnit(self)
+    if not ok and why and not own_drop_failed[why] then
+        own_drop_failed[why] = true
+        log("the magazine is not dropped (kept in the inventory): " .. tostring(why))
+    end
+end
+
+-- The mod's own drop goes through the same rules (drop mode, once per reload,
+-- the record for pickup) as a magazine-drop mod's.
+Ammo.FallbackDrop = own_drop_orig
+Ammo.OwnDrop = make_drop_hook(own_drop_orig)
+
 local function make_interupt_hook(orig)
     return function(self, t, ...)
         local wep = Ammo.EquippedBase()
         local ret = orig(self, t, ...)
-        if Ammo.settings.enabled and wep and not Ammo.SkipWeapon(wep) and not Ammo.IsLooseFed(wep) then
+        if Ammo.On() and wep and not Ammo.SkipWeapon(wep) and not Ammo.IsLooseFed(wep) then
             reload_interrupted(wep)
             -- A fast reload that was interrupted is forgotten (TryFastReload
             -- sets its flags after interrupting the first reload).
@@ -951,7 +1382,6 @@ end
 
 ------------------------------------------------------------ dropped mags
 
-local PICKUP_RANGE = 250
 local PICKUP_HOLD = 1
 local AIM_RADIUS = 50
 local mvec_from = Vector3()
@@ -960,46 +1390,59 @@ local mvec_dir = Vector3()
 local mvec_v = Vector3()
 local mvec_closest = Vector3()
 
+-- A magazine on the floor can be picked up when it fits in the inventory.
 local function can_pickup_dropped(tag)
-    if not tag or not tag.queue_key then return false end
-    local wep = Ammo.EquippedBase()
-    local info = wep and Ammo.Identify(wep)
-    local count = Ammo.MagCount(tag.queue_key)
-    local cap = Ammo.MagAmountFor(tag.pid, tag.caliber, tag.name_id) * (tag.akimbo and 2 or 1) + Ammo.ExtraMags()
-    if wep and wep._issr_mag_gone and info and info.key == tag.queue_key then
-        cap = cap + 1
-    end
-    return count < cap
+    return Ammo.DroppedFits(tag)
 end
 
 local function bar_stop(complete)
     holster_release("pickup")
 end
 
+-- The "pick up" hint is the game's interaction text: it stays until it is
+-- removed, so it is removed whenever no magazine is aimed at.
+local function hide_pickup_hint()
+    if not Ammo.pickup_hint then return end
+    Ammo.pickup_hint = nil
+    pcall(function() managers.hud:remove_interact() end)
+    pcall(function() managers.hud:hide_interaction_bar(false) end)
+end
+
 local function clear_pickup()
     bar_stop(false)
+    hide_pickup_hint()
     Ammo.pickup_tag = nil
     Ammo.pickup_t = nil
 end
 
-local function firearm_in_hand(state)
-    local base = Ammo.EquippedBase()
-    if not base or base.get_ammo_remaining_in_clip == nil or base._blueprint == nil then return false end
-    if state._is_meleeing and state:_is_meleeing() then return false end
-    local pl = Ammo.PlayerUnit()
-    local inv = pl and pl:inventory()
-    local sel = inv and inv.equipped_selection and inv:equipped_selection()
-    return sel == nil or sel == 1 or sel == 2
+local pickup_failed = {}
+local function pickup_problem(reason)
+    if pickup_failed[reason] then return end
+    pickup_failed[reason] = true
+    log("a dropped magazine could not be picked up: " .. reason)
 end
+
+-- The game is interacting with something else (or could: an object is
+-- highlighted): that comes first.
+local function game_interaction(state)
+    local ok, busy = pcall(function()
+        if state._interacting and state:_interacting() then return true end
+        local inter = state._interaction or (managers and managers.interaction)
+        return inter and inter.active_unit and inter:active_unit() ~= nil
+    end)
+    return ok and busy and true or false
+end
+Ammo.GameInteraction = game_interaction
 
 local function find_aimed_tag(pos, rot)
     mvector3.set(mvec_from, pos)
     mvector3.set(mvec_to, rot:y())
-    mvector3.multiply(mvec_to, PICKUP_RANGE)
+    local range = Ammo.PickupRange()
+    mvector3.multiply(mvec_to, range)
     mvector3.add(mvec_to, mvec_from)
 
     local ray = World:raycast(mvec_from, mvec_to)
-    local hit_dist = ray and mvector3.distance(mvec_from, ray.position) or PICKUP_RANGE
+    local hit_dist = ray and mvector3.distance(mvec_from, ray.position) or range
     local tag = ray and ray.unit and alive(ray.unit) and dropped[ray.unit:key()] or nil
     if tag then return tag end
 
@@ -1039,7 +1482,7 @@ local function update_pickup(state, t)
         if not alive(tag.col) then dropped[k] = nil end
     end
 
-    if not Ammo.settings.enabled or next(dropped) == nil then
+    if not Ammo.On() or next(dropped) == nil then
         clear_pickup()
         return
     end
@@ -1056,13 +1499,15 @@ local function update_pickup(state, t)
 
     local tag = find_aimed_tag(pos, rot)
 
-    if not tag or not can_pickup_dropped(tag) then
+    if not tag or not can_pickup_dropped(tag) or game_interaction(state) then
         clear_pickup()
         return
     end
 
-    if Ammo.pickup_tag ~= tag then
+    if Ammo.pickup_tag ~= tag or not Ammo.pickup_hint then
         Ammo.pickup_tag = tag
+        Ammo.pickup_t = nil
+        Ammo.pickup_hint = true
         pcall(function()
             managers.hud:show_interact({
                 text = managers.localization:btn_macro("interact", false) .. " " .. L("issr_pickup", "Pick up magazine")
@@ -1070,49 +1515,53 @@ local function update_pickup(state, t)
         end)
     end
 
+    -- Held: what the game read this frame (Ammo.interact_held, from the input
+    -- hook), or the controller itself.
     local ctrl = state._controller
-    local held = ctrl and ctrl.get_input_bool and ctrl:get_input_bool("interact")
+    local held = Ammo.interact_held
+    if not held and ctrl and ctrl.get_input_bool then
+        local ok, v = pcall(ctrl.get_input_bool, ctrl, "interact")
+        held = ok and v
+    end
 
     if not held then
-        if Ammo.pickup_t or holster == "pickup" then
-            bar_stop(false)
+        if Ammo.pickup_t then
             Ammo.pickup_t = nil
-            Ammo.pickup_tag = nil
+            pcall(function() managers.hud:hide_interaction_bar(false) end)
         end
         return
     end
 
+    -- A plain hold, like the game's own pickups (no holstering: the weapon
+    -- switch is changed by other mods and could keep it from finishing).
     if not Ammo.pickup_t then
-        local in_hand = firearm_in_hand(state) and state._unequip_weapon_expire_t == nil
-        local need_holster = holster == "pickup" or in_hand
-
-        if need_holster and (not holster_start(state, t, "pickup") or not holstered(state, t)) then return end
-
         Ammo.pickup_t = t
-        managers.hud:show_interaction_bar(0, PICKUP_HOLD)
+        pcall(function() managers.hud:show_interaction_bar(0, PICKUP_HOLD) end)
     end
 
     local progress = math.min(1, (t - Ammo.pickup_t) / PICKUP_HOLD)
-
-    managers.hud:set_interaction_bar_width(progress * PICKUP_HOLD, PICKUP_HOLD)
+    pcall(function() managers.hud:set_interaction_bar_width(progress * PICKUP_HOLD, PICKUP_HOLD) end)
 
     if progress < 1 then return end
 
-    local ok = Ammo.PickupDropped(tag)
+    local ok, picked = pcall(Ammo.PickupDropped, tag)
+    if not ok then
+        pickup_problem(tostring(picked))
+        picked = false
+    elseif not picked then
+        pickup_problem("it did not fit in the inventory")
+    end
 
-    bar_stop(ok)
-    pcall(function() managers.hud:remove_interact() end)
-
-    if ok then
+    if picked then
         if alive(tag.col) then tag.col:set_slot(0) end
         if alive(tag.mag) then tag.mag:set_slot(0) end
         dropped[tag.key] = nil
         pcall(function() pl:sound():play("pickup_ammo") end)
     end
 
-    Ammo.pickup_tag = nil
-    Ammo.pickup_t = nil
+    clear_pickup()
 end
+Ammo.UpdatePickup = update_pickup
 
 -- Picks a magazine that lies on the floor up: it becomes an inventory item.
 function Ammo.PickupDropped(tag)
@@ -1124,10 +1573,15 @@ function Ammo.PickupDropped(tag)
     local spec = nil
     if tag.typed then
         info.typed = true
+        -- Tags from before 0.20.0 have no family: a size means a rifle.
+        info.family = tag.family or "rifle"
+        info.sized = tag.sized or (tag.family == nil and tag.size ~= nil) or nil
+        info.factory_id = tag.factory_id
         info.capacity = tag.base_capacity or info.capacity
         spec = { size = tag.size, bullet = tag.bullet, load = tag.load }
     end
     local ok = Ammo.AddMagazineKey(tag.queue_key, tag.rounds or 0, info, nil, spec)
+    if not ok then ok = Ammo.AddMagazineKey(tag.queue_key, tag.rounds or 0, info, { "backpack" }, spec) end
     if ok then
         local wep = Ammo.EquippedBase()
         if wep then pcall(Ammo.SyncTotal, wep) end
@@ -1141,24 +1595,56 @@ Ammo.Dropped = dropped
 
 ------------------------------------------------------------- the bullets
 
+-- An akimbo second gun counts as its parent weapon.
+local function parent_base(base)
+    local parent = base.parent_weapon
+    if parent then
+        local ok, pb = pcall(function() return parent:base() end)
+        if ok and pb then return pb end
+    end
+    return base
+end
+
 -- The weapon whose magazine counts: an akimbo second gun fires the main
 -- weapon's bullets. Only the player's assault rifles and SMGs.
 local function typed_base(base)
     if not base then return nil end
-    local parent = base.parent_weapon
-    if parent then
-        local ok, pb = pcall(function() return parent:base() end)
-        if ok and pb then base = pb end
-    end
-    if not Ammo.settings.enabled or not Ammo.IsOurs(base) or not Ammo.Typed(base) then return nil end
+    base = parent_base(base)
+    if not Ammo.On() or not Ammo.IsOurs(base) then return nil end
+    if Ammo.Typed(base) then return base end
+    -- LMGs: their rounds work like rifle bullets.
+    local info = Ammo.Identify(base)
+    if not info or info.family ~= "lmg" or Ammo.SkipWeapon(base) then return nil end
     return base
 end
 Ammo.TypedBase = typed_base
 
+-- The weapon whose shells count, for a shotgun (an akimbo second gun fires
+-- the main weapon's shells).
+local function shell_base(base)
+    if not base then return nil end
+    base = parent_base(base)
+    if not Ammo.On() or not Ammo.IsOurs(base) then return nil end
+    local info = Ammo.Identify(base)
+    if not info or info.family ~= "shell" or Ammo.SkipWeapon(base) then return nil end
+    return base
+end
+Ammo.ShellBase = shell_base
+
 -- The damage of a shot: the bullet's multiplier. The game reads the
 -- shoot-through flags right after this, so they follow the bullet here.
+-- A shotgun: the shell being fired leaves the top of the load and the gun
+-- takes that shell's profile (the game's own values for that ammunition
+-- type) before the game works out the damage and the pellets.
 local function make_damage_hook(orig)
     return function(self, ...)
+        local shells = PDTI.Shells
+        local sbase = shells and shell_base(self)
+        if sbase then
+            local shell = Ammo.ShotBullet(sbase)
+            shells.Apply(self, shell)
+            return orig(self, ...)
+        end
         local damage = orig(self, ...)
         local base = typed_base(self)
         if not base or type(damage) ~= "number" then return damage end
@@ -1185,11 +1671,7 @@ end
 -- the gun's fire interval (plus a little slack); a pause starts over.
 Ammo.BURST_SLACK = 0.05
 
-local function now_time()
-    local ok, t = pcall(function() return Application:time() end)
-    if ok and type(t) == "number" then return t end
-    return os.clock()
-end
+local now_time = PDTI.AppTime
 
 local function fire_interval(base)
     local ok, value = pcall(function()
@@ -1199,6 +1681,12 @@ local function fire_interval(base)
     end)
     if ok and type(value) == "number" and value > 0 then return value end
     return 0.1
+end
+
+-- Is the player's weapon resting on its bipod?
+function Ammo.OnBipod()
+    local ok, state = pcall(function() return managers.player:current_state() end)
+    return ok and state == "bipod"
 end
 
 -- The bullet's recoil factor for this shot, and the shots in a row so far.
@@ -1213,6 +1701,7 @@ function Ammo.BulletRecoil(base)
     base._pdti_recoil_t = t
     base._pdti_recoil_streak = streak
     if not def.recoil then return 1, streak end
+    if def.bipod_recoil and Ammo.OnBipod() then return def.bipod_recoil, streak end
     local build = math.min(streak, def.recoil_build_max or 0) * (def.recoil_build or 0)
     return def.recoil * (1 + build), streak
 end
@@ -1254,6 +1743,16 @@ end
 -- enemy can take critical hits at all).
 local function make_crit_hook(orig)
     return function(self, attack_data, ...)
+        -- An HE blast whose critical hit this mod already decided: the game
+        -- does not roll a second time (vanilla rolls in damage_explosion).
+        if type(attack_data) == "table" and attack_data._pdti_crit_decided then
+            local damage, clamp = ...
+            damage = tonumber(damage) or attack_data.damage
+            if tonumber(clamp) and tonumber(damage) then damage = math.min(damage, clamp) end
+            return false, damage
+        end
+        -- The game passes the damage (and a cap) itself since 2026.
+        local passed, clamp = ...
         local ok, crit, damage = pcall(function()
             if type(attack_data) ~= "table" or not attack_data.col_ray then return nil end
             if attack_data.attacker_unit ~= Ammo.PlayerUnit() then return nil end
@@ -1264,16 +1763,154 @@ local function make_crit_hook(orig)
             local def = Ammo.BULLETS[Ammo.BulletId(Ammo.FiredBullet(base))]
             if not def.limb_crit then return nil end
             local body = attack_data.col_ray.body
-            if not body or not Ammo.IsLimbBody(body:name()) then return nil end
+            local limb = body and Ammo.IsLimbBody(body:name())
+            -- A skill can make every hit on some enemies a crit (cloakers).
+            if not limb and not (Ammo.hp_crit_any and Ammo.hp_crit_any(self)) then return nil end
             if not self:can_be_critical(attack_data) then return nil end
             local tweak = self._char_tweak or {}
             local critical_hits = tweak.critical_hits or {}
             local mul = critical_hits.damage_mul or tweak.headshot_dmg_mul
-            local dmg = attack_data.damage
-            return true, mul and dmg * mul or (self._health or dmg) * 10
+            local dmg = tonumber(passed) or tonumber(attack_data.damage)
+            if not dmg then return nil end
+            local out = mul and dmg * mul or (self._health or dmg) * 10
+            if tonumber(clamp) then out = math.min(out, clamp) end
+            return true, out
         end)
-        if ok and crit then return true, damage end
+        if ok and crit then
+            Ammo.SureCrit(self, attack_data, "hp")
+            return true, damage
+        end
         return orig(self, attack_data, ...)
+    end
+end
+
+-- A sure crit (HP on a limb, HE on a bulldozer or a turret): the skills hear
+-- of it through Ammo.on_sure_crit(dmg_ext, attack_data, kind, turret).
+function Ammo.SureCrit(dmg_ext, attack_data, kind, turret)
+    local f = Ammo.on_sure_crit
+    if type(f) ~= "function" then return end
+    local ok, err = pcall(f, dmg_ext, attack_data, kind, turret)
+    if not ok then log("a sure crit hook failed: " .. tostring(err)) end
+end
+
+-- HE rounds (LMG): the blast is a critical hit by the player's crit chance,
+-- like a bullet, and always on a bulldozer or a turret. (Restoration's
+-- explosions never roll one; the game's own roll is skipped for these, so
+-- vanilla does not roll twice.)
+function Ammo.IsDozer(dmg_ext)
+    local ok, dozer = pcall(function()
+        local base = dmg_ext._unit and dmg_ext._unit:base()
+        local name = base and base._tweak_table
+        if type(name) == "string" and name:find("^tank") then return true end
+        local tags = dmg_ext._char_tweak and dmg_ext._char_tweak.tags
+        if type(tags) == "table" then
+            for _, tag in pairs(tags) do if tag == "tank" then return true end end
+        end
+        return false
+    end)
+    return ok and dozer == true
+end
+
+-- What a critical hit multiplies by on this enemy (or turret).
+Ammo.HE_CRIT_MUL = 2
+local function crit_mul(dmg_ext)
+    local tweak = type(dmg_ext._char_tweak) == "table" and dmg_ext._char_tweak or {}
+    local hits = type(tweak.critical_hits) == "table" and tweak.critical_hits or {}
+    return tonumber(hits.damage_mul) or tonumber(tweak.headshot_dmg_mul) or Ammo.HE_CRIT_MUL
+end
+
+-- The HE blast this attack is part of, or nil.
+local function he_blast(attack_data)
+    local blast = Ammo.he_blast
+    if not blast or type(attack_data) ~= "table" or attack_data.variant == "stun" then return nil end
+    if not tonumber(attack_data.damage) then return nil end
+    if attack_data.attacker_unit ~= Ammo.PlayerUnit() then return nil end
+    if blast.weapon ~= nil and attack_data.weapon_unit ~= blast.weapon then return nil end
+    local def = Ammo.BULLETS.explosive
+    if not (def and def.blast_crit) then return nil end
+    return blast
+end
+
+-- The crit roll of the game, done here: the game's own roll_critical_hit
+-- differs between versions (the one in the game since 2026 needs the damage
+-- as its second argument and failed on nil, which crashed the game, 0.21.4),
+-- so it is not called. The same sums: the enemy's base chance plus the
+-- player's crit chance times the enemy's multiplier, if this weapon can crit
+-- with explosions at all.
+Ammo.crit_roll = function() return math.random() end
+function Ammo.RollCrit(dmg_ext, attack_data)
+    local ok, crit = pcall(function()
+        if type(dmg_ext.can_be_critical) == "function" and not dmg_ext:can_be_critical(attack_data) then
+            return false
+        end
+        local tweak = type(dmg_ext._char_tweak) == "table" and dmg_ext._char_tweak or {}
+        local hits = type(tweak.critical_hits) == "table" and tweak.critical_hits or {}
+        local chance = (tonumber(hits.base_chance) or 0)
+        local player = 0
+        pcall(function() player = tonumber(managers.player:critical_hit_chance()) or 0 end)
+        chance = chance + player * (tonumber(hits.player_chance_multiplier) or 1)
+        return chance > 0 and Ammo.crit_roll() < chance
+    end)
+    return ok and crit == true
+end
+
+function Ammo.HeCrit(dmg_ext, attack_data, turret)
+    if not he_blast(attack_data) then return false end
+    local def = Ammo.BULLETS.explosive
+    local crit, damage = false, attack_data.damage
+    if def.sure_crit and (turret or Ammo.IsDozer(dmg_ext)) then
+        -- An anti-armour round: heavy_mul times the damage, then the crit.
+        crit, damage = true, attack_data.damage * (tonumber(def.heavy_mul) or 1) * crit_mul(dmg_ext)
+        attack_data._pdti_sure_crit = true
+    else
+        crit = Ammo.RollCrit(dmg_ext, attack_data)
+        if crit then damage = attack_data.damage * crit_mul(dmg_ext) end
+    end
+    attack_data._pdti_crit_decided = true
+    if crit then
+        attack_data.damage = damage
+        attack_data.critical_hit = true
+        pcall(function() managers.hud:on_crit_confirmed() end)
+        if attack_data._pdti_sure_crit then Ammo.SureCrit(dmg_ext, attack_data, "he", turret) end
+    end
+    return crit
+end
+
+-- HE rounds stun: a hit enemy who lives through the blast may be dazed (the
+-- concussion grenade's stun, the game's own stun_hit). Bulldozers have their
+-- own chance (none by default: they take sure critical hits instead).
+Ammo.stun_roll = function() return math.random() end
+function Ammo.HeStun(dmg_ext, attack_data)
+    local def = Ammo.BULLETS.explosive
+    local chance = tonumber(def.stun_chance) or 0
+    if Ammo.IsDozer(dmg_ext) then chance = tonumber(def.dozer_stun_chance) or 0 end
+    if chance <= 0 or dmg_ext._dead or type(dmg_ext.stun_hit) ~= "function" then return false end
+    local col_ray = attack_data.col_ray
+    if type(col_ray) ~= "table" or not col_ray.position then return false end
+    local civilian = false
+    pcall(function() civilian = CopDamage.is_civilian(dmg_ext._unit:base()._tweak_table) end)
+    if civilian then return false end
+    if Ammo.stun_roll() >= chance then return false end
+    local ok, err = pcall(dmg_ext.stun_hit, dmg_ext, { variant = "explosion", damage = 0,
+        attacker_unit = attack_data.attacker_unit, weapon_unit = attack_data.weapon_unit, col_ray = col_ray })
+    if not ok then log("HE stun failed: " .. tostring(err)) end
+    if ok and type(Ammo.on_he_stun) == "function" then pcall(Ammo.on_he_stun, dmg_ext) end
+    return ok
+end
+
+local function make_he_crit_hook(turret)
+    return function(orig)
+        return function(self, attack_data, ...)
+            local is_he = he_blast(attack_data) ~= nil
+            local ok, err = pcall(Ammo.HeCrit, self, attack_data, turret)
+            if not ok then log("HE critical hit failed: " .. tostring(err)) end
+            local result = { orig(self, attack_data, ...) }
+            if is_he and not turret then
+                local ok2, err2 = pcall(Ammo.HeStun, self, attack_data)
+                if not ok2 then log("HE stun failed: " .. tostring(err2)) end
+            end
+            return unpack(result, 1, table.maxn(result))
+        end
     end
 end
 
@@ -1281,7 +1918,7 @@ end
 
 -- The akimbo weapon of the player whose guns follow the mouse buttons.
 local function akimbo_buttons(wep)
-    return wep ~= nil and Ammo.settings.enabled and Ammo.settings.akimbo_buttons ~= false
+    return wep ~= nil and Ammo.On() and Ammo.settings.akimbo_buttons ~= false
         and Ammo.IsAkimbo(wep) and Ammo.IsOurs(wep) and not Ammo.SkipWeapon(wep)
 end
 Ammo.AkimboButtons = akimbo_buttons
@@ -1293,6 +1930,18 @@ local function make_input_hook(orig)
     return function(self, t, dt, paused, ...)
         local input = orig(self, t, dt, paused, ...)
         if type(input) ~= "table" then return input end
+        if Ammo.LoadActive and Ammo.LoadActive() and Ammo.ActionPressed(input) then
+            Ammo.StopLoad("stopped")
+        end
+        pcall(Ammo.HandleWheel, self, input, t)
+        -- The interact key while a dropped magazine is aimed at picks it up:
+        -- the game does not also shout at nobody.
+        Ammo.interact_held = input.btn_interact_state and true or false
+        if Ammo.pickup_tag and Ammo.pickup_hint then
+            input.btn_interact_press = nil
+            input.btn_interact_release = nil
+            input.btn_interact_state = false
+        end
         local wep = Ammo.EquippedBase()
         if not akimbo_buttons(wep) then
             if wep then wep._pdti_want = nil end
@@ -1341,16 +1990,14 @@ local function arm_hint(g)
     if Ammo.arm_hint_t and t - Ammo.arm_hint_t < Ammo.ARM_HINT_INTERVAL then return end
     Ammo.arm_hint_t = t
     local side = g == 1 and "left" or "right"
-    pcall(function()
-        managers.hud:show_hint({ text = "Your " .. side .. " arm is black: the " .. side .. " gun cannot fire" })
-    end)
+    PDTI.Hint("Your " .. side .. " arm is black: the " .. side .. " gun cannot fire")
 end
 
 local function make_akimbo_fire_hook(orig)
     return function(self, ...)
         local want = self._pdti_want
         local blocked = { false, false }
-        local ours = Ammo.settings.enabled and Ammo.IsAkimbo(self) and Ammo.IsOurs(self) and not Ammo.SkipWeapon(self)
+        local ours = Ammo.On() and Ammo.IsAkimbo(self) and Ammo.IsOurs(self) and not Ammo.SkipWeapon(self)
         if ours then blocked = { Ammo.ArmBlocked(1), Ammo.ArmBlocked(2) } end
         if type(want) ~= "table" or not akimbo_buttons(self) then
             -- The game fires both guns; with a black arm only the other one.
@@ -1425,6 +2072,10 @@ local REQUIRED_HOOKS = {
     { "PlayerStandard", "_interupt_action_reload", make_interupt_hook },
     { "HUDTeammate", "set_ammo_amount_by_type", make_hud_hook }
 }
+-- Not needed for the hooks above to be in place (loaded with the pickups).
+local LATE_HOOKS = {
+    { "AmmoClip", "_pickup", make_box_pickup_hook }
+}
 
 -- These functions only exist with the NQR mod (its reload stages and its
 -- dropped magazines). Without NQR the mod derives the stages from the reload
@@ -1440,6 +2091,9 @@ local OPTIONAL_HOOKS = {
     { "NewRaycastWeaponBase", "armor_piercing_chance", make_pierce_hook },
     { "NewRaycastWeaponBase", "recoil_multiplier", make_recoil_hook },
     { "CopDamage", "roll_critical_hit", make_crit_hook },
+    -- HE rounds: critical hits, sure ones on bulldozers and turrets.
+    { "CopDamage", "damage_explosion", make_he_crit_hook(false) },
+    { "SentryGunDamage", "damage_explosion", make_he_crit_hook(true) },
     -- Akimbo: a mouse button per gun.
     { "PlayerStandard", "_get_input", make_input_hook },
     { "AkimboWeaponBase", "fire", make_akimbo_fire_hook }
@@ -1454,6 +2108,7 @@ function Ammo.InstallHooks()
     if hooks_installed then
         -- NQR can load after this mod: its functions are wrapped when they appear.
         for _, entry in ipairs(OPTIONAL_HOOKS) do wrap(entry[1], entry[2], entry[3]) end
+        for _, entry in ipairs(LATE_HOOKS) do wrap(entry[1], entry[2], entry[3]) end
         return true
     end
 
@@ -1464,10 +2119,16 @@ function Ammo.InstallHooks()
         end
     end
     for _, entry in ipairs(OPTIONAL_HOOKS) do wrap(entry[1], entry[2], entry[3]) end
+    for _, entry in ipairs(LATE_HOOKS) do wrap(entry[1], entry[2], entry[3]) end
 
     if #missing == 0 then
         hooks_installed = true
         log("the ammunition hooks are in place")
+        if NewRaycastWeaponBase.drop_magazine_object then
+            log("drop_magazine_object exists (the game's or a mod's); if it drops nothing, this mod drops the magazine")
+        else
+            log("magazines are dropped by this mod (no magazine-drop mod installed)")
+        end
         return true
     end
 
@@ -1508,6 +2169,10 @@ local function track_reload(state, t, base, applicable)
 
     if Ammo.track_stage < 1 and frac >= stage_out() then
         Ammo.track_stage = 1
+        if base._pdti_unload then
+            finish_unload(state, base, t)
+            return
+        end
         mag_left(base, base._issr_reload_dropped)
         mag_out_drop(base)
     end
@@ -1533,20 +2198,30 @@ local function prepare_weapon(base)
 end
 
 -- Runs fn for every weapon of the player the mod manages.
-function Ammo.ForEachWeapon(fn)
-    local pl = Ammo.PlayerUnit()
-    if not pl then return end
-    local ok, selections = pcall(function() return pl:inventory():available_selections() end)
-    if not ok or type(selections) ~= "table" then return end
-    -- The primary first: its magazines get the first places in the rig.
-    local order = {}
-    for index, sel in pairs(selections) do order[#order + 1] = { index = index, sel = sel } end
-    table.sort(order, function(a, b)
-        local ia, ib = tonumber(a.index) or 0, tonumber(b.index) or 0
-        return ia > ib
-    end)
-    for _, entry in ipairs(order) do
-        local sel = entry.sel
+-- Runs every frame: the scratch lists are reused (one pair per nesting depth,
+-- fn may run it again); no closures.
+local function selections_of(pl) return pl:inventory():available_selections() end
+local scratch_index, scratch_sel, scratch_depth = {}, {}, 0
+local function selection_number(index) return tonumber(index) or 0 end
+
+-- Sorts the selections into the scratch lists and runs fn on each weapon.
+-- An error here (a broken unit) still reaches the caller, but only after
+-- ForEachWeapon has cleaned up.
+local function visit_selections(fn, selections, indexes, sels)
+    local n = 0
+    for index, sel in pairs(selections) do
+        -- insertion sort, highest selection number first
+        local key = selection_number(index)
+        local i = n
+        while i > 0 and selection_number(indexes[i]) < key do
+            indexes[i + 1], sels[i + 1] = indexes[i], sels[i]
+            i = i - 1
+        end
+        indexes[i + 1], sels[i + 1] = index, sel
+        n = n + 1
+    end
+    for i = 1, n do
+        local sel = sels[i]
         local wep = sel.unit and sel.unit:base()
         if wep and not Ammo.SkipWeapon(wep) then
             local done, err = pcall(fn, wep)
@@ -1555,14 +2230,38 @@ function Ammo.ForEachWeapon(fn)
     end
 end
 
+function Ammo.ForEachWeapon(fn)
+    local pl = Ammo.PlayerUnit()
+    if not pl then return end
+    local ok, selections = pcall(selections_of, pl)
+    if not ok or type(selections) ~= "table" then return end
+    -- The primary first: its magazines get the first places in the rig.
+    scratch_depth = scratch_depth + 1
+    local depth = scratch_depth
+    local indexes, sels = scratch_index[depth], scratch_sel[depth]
+    if not indexes then
+        indexes, sels = {}, {}
+        if depth <= 8 then scratch_index[depth], scratch_sel[depth] = indexes, sels end
+    end
+    local done, err = pcall(visit_selections, fn, selections, indexes, sels)
+    -- Always cleared and unwound, also after an error: no stale units kept,
+    -- the depth does not creep up.
+    for i in pairs(indexes) do indexes[i] = nil end
+    for i in pairs(sels) do sels[i] = nil end
+    scratch_depth = depth - 1
+    if not done then error(err, 0) end
+end
+
 local ensured = setmetatable({}, { __mode = "k" })
 
+local function ensure_one(wep)
+    if ensured[wep] then return end
+    ensured[wep] = true
+    prepare_weapon(wep)
+end
+
 function Ammo.EnsureAllSupplies()
-    Ammo.ForEachWeapon(function(wep)
-        if ensured[wep] then return end
-        ensured[wep] = true
-        prepare_weapon(wep)
-    end)
+    Ammo.ForEachWeapon(ensure_one)
 end
 
 -- Called every frame from the mod's game hook.
@@ -1571,7 +2270,11 @@ function Ammo.GameTick(state, t, dt, paused)
     -- every hook is in place.
     Ammo.InstallHooks()
 
-    if paused then return end
+    -- In the safehouse the weapons are the game's own: nothing to follow.
+    if paused or PDTI.InSafehouse() then return end
+
+    -- Loose rounds dropped onto a magazine in the inventory screen.
+    if Ammo.LoadTick then pcall(Ammo.LoadTick, dt) end
 
     local base = Ammo.EquippedBase()
     local applicable = base ~= nil and not Ammo.SkipWeapon(base)
@@ -1622,7 +2325,7 @@ function Ammo.GameTick(state, t, dt, paused)
         track_reload(state, t, base, applicable and not Ammo.IsLooseFed(base))
     end
 
-    if Ammo.settings.overlay_always and Ammo.settings.enabled then
+    if Ammo.settings.overlay_always and Ammo.On() then
         local want = applicable
         if want ~= (Ammo.IsPanelVisible and Ammo.IsPanelVisible()) then
             Ammo.SetPanel(want)
@@ -1637,6 +2340,13 @@ function Ammo.GameTick(state, t, dt, paused)
 
     if holster == "refill" and holstered(state, t) then
         Ammo.Tick(dt)
+    elseif Ammo.pouch_packing then
+        if holster == nil and state and reload_held(state) and Ammo.PouchPackAllowed
+            and Ammo.PouchPackAllowed(state, base) then
+            Ammo.Tick(dt)
+        else
+            Ammo.pouch_packing = nil
+        end
     end
 
     if Ammo.IsPanelVisible and Ammo.IsPanelVisible() then

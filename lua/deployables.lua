@@ -51,16 +51,10 @@ Dep.CYCLE_KEY = "x"
 -- brought): the cycle offers it after the inventory's deployables.
 Dep.GAME = "__game__"
 
-local reported = {}
 
-local function log(message)
-    local line = "[PDTI DEPLOY] " .. tostring(message)
-    if _G.log then _G.log(line) else print(line) end
-end
+local log = PDTI.Logger("PDTI DEPLOY")
 
-local function hint(text)
-    pcall(function() managers.hud:show_hint({ text = text }) end)
-end
+local hint = PDTI.Hint
 
 -- The placement function of an item, from its definition.
 function Dep.Method(item_id)
@@ -80,6 +74,46 @@ function Dep.EquipmentId(item_id)
         if mapped == item_id then return item_id end
     end
     return item_id
+end
+
+-- Is this game equipment id one the inventory manages (an item places it)?
+function Dep.ManagedEquipment(equipment_id)
+    if not equipment_id then return false end
+    for id, def in pairs(PDTI.GetItemDefinitions()) do
+        if def.deployable and Dep.EquipmentId(id) == equipment_id then return true end
+    end
+    return false
+end
+
+-- How the game checks where it goes: "look" (on a wall or the floor in
+-- front: trip mines, ECMs, spy cameras), "none" (used on yourself: the armor
+-- kit) or "shape" (put down like a bag).
+Dep.LOOK = { trip_mine = true, ecm_jammer = true, spy_camera = true }
+Dep.NO_PLACEMENT = { armor_kit = true }
+function Dep.PlacementKind(item_id)
+    local def = PDTI.GetItemDefinition(item_id)
+    if def and def.placement == "look" then return "look" end
+    if def and def.placement == "none" then return "none" end
+    local equipment_id = Dep.EquipmentId(item_id)
+    if Dep.LOOK[equipment_id] then return "look" end
+    if Dep.NO_PLACEMENT[equipment_id] then return "none" end
+    return "shape"
+end
+
+-- Is the spot in front valid for the item (the game's own check)?
+function Dep.ValidPlacement(equipment, item_id)
+    local equipment_id = Dep.EquipmentId(item_id)
+    local data = tweak_data.equipments and tweak_data.equipments[equipment_id]
+    local kind = Dep.PlacementKind(item_id)
+    if kind == "none" then return true end
+    if not equipment or not data then return false end
+    local ok, valid
+    if kind == "look" then
+        ok, valid = pcall(equipment.valid_look_at_placement, equipment, data)
+    else
+        ok, valid = pcall(equipment.valid_shape_placement, equipment, equipment_id, data)
+    end
+    return ok and valid and true or false
 end
 
 -- Every item that can be selected as a deployable.
@@ -161,9 +195,7 @@ function Dep.GameEquipment()
     local eq = pm and pm._equipment
     local entry = eq and eq.selections and eq.selections[eq.selected_index]
     if not entry or not entry.equipment then return nil end
-    for _, item_id in pairs(Dep.MAP) do
-        if entry.equipment == Dep.EquipmentId(item_id) then return nil end
-    end
+    if Dep.ManagedEquipment(entry.equipment) then return nil end
     local amount = entry.amount and entry.amount[1]
     if amount ~= nil and Application and Application.digest_value then
         local ok, n = pcall(function() return Application:digest_value(amount, false) end)
@@ -179,9 +211,7 @@ function Dep.GameManagedEquipment()
     local eq = pm and pm._equipment
     local entry = eq and eq.selections and eq.selections[eq.selected_index]
     if not entry or not entry.equipment then return nil end
-    for _, item_id in pairs(Dep.MAP) do
-        if entry.equipment == Dep.EquipmentId(item_id) then return entry end
-    end
+    if Dep.ManagedEquipment(entry.equipment) then return entry end
     return nil
 end
 
@@ -224,6 +254,7 @@ end
 
 -- A new heist: nothing is picked, the first one found is placed.
 function Dep.OnHeistStart()
+    if PDTI.InSafehouse() then return end
     Dep.game_pick = false
     if PDTI.GetDeployable and PDTI.GetDeployable() then pcall(PDTI.SetDeployable, nil) end
 end
@@ -282,7 +313,8 @@ end
 
 -- True while the inventory places the deployable: you carry one.
 function Dep.Manages()
-    if not Dep.enabled then return false end
+    -- In the safehouse nothing of the inventory is placed or used up.
+    if not Dep.enabled or PDTI.InSafehouse() then return false end
     return Dep.GetSelection() ~= nil
 end
 
@@ -290,7 +322,7 @@ end
 -- kinds the inventory manages (you brought an ammo bag), but there is none in
 -- your rig or pockets. What you place is what you carry.
 function Dep.BlocksGame()
-    if not Dep.enabled then return false end
+    if not Dep.enabled or PDTI.InSafehouse() then return false end
     if Dep.Manages() then return false end
     return Dep.GameManagedEquipment() ~= nil
 end
@@ -355,15 +387,157 @@ function Dep.RunPlacement(equipment, item_id)
     -- has to exist before they are called.
     local equipment_id = Dep.EquipmentId(item_id)
     local data = tweak_data.equipments and tweak_data.equipments[equipment_id]
-    if data and type(equipment.valid_shape_placement) == "function" then
-        pcall(function() equipment:valid_shape_placement(equipment_id, data) end)
-    end
+    if data then Dep.ValidPlacement(equipment, item_id) end
 
-    local ok, used, redirect = pcall(fn, equipment)
+    -- As the game calls it: the selected slot and the unit index (the sentry
+    -- gun uses them: 1 the normal sentry, 2 the suppressed one).
+    local selected_index = nil
+    pcall(function() selected_index = managers.player._equipment.selected_index end)
+    local ok, used, redirect = pcall(fn, equipment, selected_index, data and data.unit)
     if not ok then
         return false, nil, "placement failed: " .. tostring(used)
     end
+    -- A client asks the host for a sentry gun and gets the answer later
+    -- (Dep.OnSentryPlaced): the item is taken out then.
+    if not used and method == "use_sentry_gun" and equipment._sentrygun_placement_requested then
+        Dep.pending_sentry = item_id
+        return false, nil, nil, true
+    end
     return (used ~= nil and used ~= false), redirect, nil
+end
+
+-- An item to hand (rig or pockets) that is this game equipment (a trip mine
+-- for "trip_mine"), or nil. Used where the game asks for a deployable
+-- without placing it: a trip mine set as a shaped charge on a safe.
+function Dep.ItemToHandFor(equipment_id)
+    if not Dep.enabled or type(equipment_id) ~= "string" or PDTI.InSafehouse() then return nil end
+    local found = nil
+    for id, def in pairs(PDTI.GetItemDefinitions()) do
+        if def.deployable and Dep.EquipmentId(id) == equipment_id and Dep.Count(id) > 0 then
+            if not found or id < found then found = id end
+        end
+    end
+    return found
+end
+
+-- The game's own count of an equipment (0 when it was not brought).
+function Dep.GameCount(equipment_id, slot)
+    local pm = managers and managers.player
+    local eq = pm and pm._equipment
+    if not eq or type(eq.selections) ~= "table" then return 0 end
+    for _, entry in ipairs(eq.selections) do
+        if entry.equipment == equipment_id and type(entry.amount) == "table" then
+            local amount = entry.amount[slot or 1]
+            if amount == nil then return 0 end
+            local n = amount
+            if Application and Application.digest_value then
+                local ok, v = pcall(function() return Application:digest_value(amount, false) end)
+                if ok then n = v end
+            end
+            return tonumber(n) or 0
+        end
+    end
+    return 0
+end
+
+-- The item that places a game equipment id ("sentry_gun" -> "sentry_gun").
+function Dep.ItemFor(equipment_id)
+    local found = nil
+    for id, def in pairs(PDTI.GetItemDefinitions()) do
+        if def.deployable and Dep.EquipmentId(id) == equipment_id then
+            if not found or id < found then found = id end
+        end
+    end
+    return found
+end
+
+-- Where a picked-up deployable goes: to hand first, then the backpack.
+Dep.STORE = { "rig", "rig_2", "rig_3", "pockets", "backpack" }
+
+function Dep.HasRoomFor(item_id)
+    for _, name in ipairs(Dep.STORE) do
+        local ok, found = pcall(PDTI.FindFreeSpace, name, { item_id = item_id }, true)
+        if ok and found then return true end
+    end
+    return false
+end
+
+-- Puts a deployable back into the inventory (a sentry gun picked up).
+function Dep.Store(item_id)
+    for _, name in ipairs(Dep.STORE) do
+        local ok, placed = pcall(PDTI.AddItemAuto, name, item_id, 1)
+        if ok and placed then
+            Dep.Changed()
+            return true, name
+        end
+    end
+    return false
+end
+
+-- A client's sentry gun was placed by the host: its item is taken out now.
+function Dep.OnSentryPlaced()
+    local item_id = Dep.pending_sentry
+    Dep.pending_sentry = nil
+    if not item_id then return false end
+    Dep.Consume(item_id)
+    Dep.Changed()
+    return true
+end
+
+-- The game's sentry gun picked up: it goes back into the inventory (true),
+-- or false when it is not one the inventory manages.
+function Dep.OnSentryPickedUp(sentry_type)
+    if not Dep.enabled then return false end
+    local item_id = Dep.ItemFor(sentry_type)
+    if not item_id then return false end
+    local ok, where = Dep.Store(item_id)
+    if ok then
+        local def = PDTI.GetItemDefinition(item_id)
+        hint((def and def.name or item_id) .. " put in your " .. tostring(where):gsub("_%d", ""))
+        return true
+    end
+    log("no room for the picked-up " .. tostring(item_id) .. ": it goes to the game's equipment")
+    return false
+end
+
+-- Hooks on the game's equipment code, installed once the classes exist
+-- (called every frame until they are in place).
+function Dep.InstallGameHooks()
+    if Dep._game_hooks_done then return true end
+    local PE, SGB = rawget(_G, "PlayerEquipment"), rawget(_G, "SentryGunBase")
+    if not PE or not SGB then return false end
+
+    -- A sentry gun costs no ammunition while the ammunition system runs:
+    -- the rounds are inventory items, and the game's cost would be undone
+    -- (and its refund on pickup would be free rounds).
+    if type(PE._sentry_gun_ammo_cost) == "function" and not PE._pdti_ammo_cost then
+        local original = PE._sentry_gun_ammo_cost
+        PE._pdti_ammo_cost = original
+        PE._sentry_gun_ammo_cost = function(self, ...)
+            local ammo = PDTI.Ammo
+            if Dep.enabled and ammo and ammo.settings and ammo.settings.enabled then return end
+            return original(self, ...)
+        end
+    end
+
+    -- Picking a sentry gun up: refused when there is no room for it.
+    if type(SGB.on_interaction) == "function" and not SGB._pdti_on_interaction then
+        local original = SGB.on_interaction
+        SGB._pdti_on_interaction = original
+        SGB.on_interaction = function(self, ...)
+            local ok, sentry_type = pcall(function() return self:get_type() end)
+            local item_id = ok and Dep.enabled and Dep.ItemFor(sentry_type)
+            if item_id and not Dep.HasRoomFor(item_id) then
+                local def = PDTI.GetItemDefinition(item_id)
+                hint("No room for the " .. (def and def.name or item_id))
+                return
+            end
+            return original(self, ...)
+        end
+    end
+
+    Dep._game_hooks_done = true
+    return true
 end
 
 -- Takes one item out of the inventory.
@@ -382,7 +556,7 @@ end
 -- Places the selected deployable. Returns true when something was placed and
 -- the redirect of the game.
 function Dep.Place(equipment)
-    if not Dep.enabled then return false end
+    if not Dep.enabled or PDTI.InSafehouse() then return false end
 
     local selection = Dep.GetSelection()
     if not selection then
@@ -404,7 +578,18 @@ function Dep.Place(equipment)
         return false
     end
 
-    local placed, redirect, err = Dep.RunPlacement(equipment, selection)
+    -- An ammo bag with fewer uses (a Spoils drop): the bag that appears gets them.
+    local skills = PDTI.AmmoSkills
+    if selection == "ammo_bag" and skills and skills.OnBagDeploy then
+        local c, iid = Dep.Find(selection)
+        local item = c and PDTI.FindItem(c, iid)
+        pcall(skills.OnBagDeploy, item and item.data, c)
+    end
+    local placed, redirect, err, pending = Dep.RunPlacement(equipment, selection)
+    if pending then return false, nil end
+    if not placed and skills and skills.OnBagDeploy and selection == "ammo_bag" then
+        pcall(skills.OnBagDeploy, nil)
+    end
     if not placed then
         if err then log(err) end
         return false, nil
@@ -413,6 +598,10 @@ function Dep.Place(equipment)
     local consumed, why = Dep.Consume(selection)
     if not consumed then
         log("could not take the item out of the inventory: " .. tostring(why))
+    end
+    -- Dallas' room: a doctor bag you place gives the self-revive back.
+    if selection == "doctor_bag" and PDTI.Gear and PDTI.Gear.OnDoctorBagPlaced then
+        pcall(PDTI.Gear.OnDoctorBagPlaced)
     end
     -- The pick is used up: the next one found becomes the deployable.
     if PDTI.GetDeployable and PDTI.GetDeployable() == selection and Dep.Count(selection) < 1 then
@@ -463,13 +652,6 @@ function Dep.ShouldPlaceOurs()
     if not Dep.enabled then return false end
     if not Dep.HasKeyTrigger() then return false end
     return Dep.Manages()
-end
-
--- True when the game's own deploy action must not start, because the
--- inventory places the deployable itself. One key press never places two
--- things.
-function Dep.SuppressVanillaDeploy()
-    return false
 end
 
 -- Registers the key with BeardLib. Called every frame until it works, so it

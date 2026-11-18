@@ -67,10 +67,15 @@ function M.setup(root, tmp)
 end
 
 function M.load_mod(root, with_ui)
-  local parts = { "items", "inventory", "ammo", "plan", "item_use", "ui_model", "ui_interaction",
-    "loot", "deployables", "deploy_hud", "loadout", "gear", "carry" }
-  if with_ui then parts[#parts + 1] = "ui_beardlib" end
+  local parts = { "items", "perks", "inventory", "ammo", "plan", "item_use", "ui_model", "ui_interaction",
+    "loot", "loot_quality", "stash", "market", "armory", "armory_parts", "armory_hotmod", "save_slot", "safehouse", "deployables", "deploy_hud", "loadout", "gear", "carry" }
+  if with_ui then parts[#parts + 1] = "ui_pictures"; parts[#parts + 1] = "ui_beardlib" end
   for _, n in ipairs(parts) do dofile(root .. "lua/" .. n .. ".lua") end
+  -- Every bag rolls "Standard" unless a test sets its own roll, so the
+  -- other tests stay the same from run to run.
+  if PDTI.LootQuality then PDTI.LootQuality.random = function() return 0 end end
+  -- No drift of the market's prices unless a test sets one.
+  if PDTI.Market then PDTI.Market.DriftRoll = function() return 0.5 end end
 end
 
 -- ---- a small fake of the parts of PAYDAY 2 the mod talks to ----
@@ -332,15 +337,33 @@ local function new_item(kind, params, parent)
   it.pw, it.ph = p.w or 100, p.size or 18
   return it
 end
+-- The textures' sizes in pixels, by path (a test sets them; unknown: 0 x 0).
+M.texture_sizes = {}
+M.probes = 0
 function Item:Panel()
   local it = self
   it.rects = it.rects or {}
+  it.bitmaps = it.bitmaps or {}
+  -- (MenuUI's text, layer 3: a picture raises it.)
+  it.title = it.title or { layer = 3, set_layer = function(t, l) t.layer = l end }
   return {
     w = function() return it.pw end, h = function() return it.ph end,
     set_size = function(_, w, h) it.pw, it.ph = w, h end,
     -- drawn rectangles (the drag preview)
     rect = function(_, p) local r = { params = p }; it.rects[#it.rects + 1] = r; return r end,
-    remove = function(_, r) for i, x in ipairs(it.rects) do if x == r then table.remove(it.rects, i) break end end end
+    -- drawn pictures (0.40.0)
+    bitmap = function(_, p)
+      local size = M.texture_sizes[p.texture] or { 0, 0 }
+      if p.visible == false then M.probes = M.probes + 1 end -- (a size read)
+      local b = { params = p,
+        texture_width = function() return size[1] end, texture_height = function() return size[2] end }
+      it.bitmaps[#it.bitmaps + 1] = b
+      return b
+    end,
+    remove = function(_, r)
+      for i, x in ipairs(it.rects) do if x == r then table.remove(it.rects, i) return end end
+      for i, x in ipairs(it.bitmaps) do if x == r then table.remove(it.bitmaps, i) return end end
+    end
   }
 end
 for _, kind in ipairs({ "Button", "Divider", "Menu", "Holder", "Group" }) do
@@ -392,6 +415,17 @@ function M.install_menuui(defer)
   function MenuUI:Enable() self.enabled = true end
   function MenuUI:Disable() self.enabled = false end
   function MenuUI:Enabled() return self.enabled end
+  -- BeardLib runs these on its next update; the tests run them by hand.
+  function MenuUI:RunCallbackNextUpdate(clbk)
+    self.next_update = self.next_update or {}
+    self.next_update[#self.next_update + 1] = clbk
+  end
+  function MenuUI:update()
+    local list = self.next_update or {}
+    self.next_update = {}
+    for _, clbk in ipairs(list) do clbk() end
+  end
+  function MenuUI:MouseMoved(_, x, y) self.moved = (self.moved or 0) + 1; self.moved_at = { x, y } end
   _G.MenuUI = MenuUI
   _G.Color = function(...) return { ... } end
   M.triggers = {}

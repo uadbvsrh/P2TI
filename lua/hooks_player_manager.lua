@@ -21,6 +21,11 @@ if not rawget(_G, "PDTI") then
     local dir = rawget(_G, "ModPath")
     if dir then pcall(dofile, dir .. "lua/main.lua") end
 end
+-- The skill rework reads and changes the upgrades through PlayerManager.
+do
+    local p = rawget(_G, "PDTI")
+    if p and p.Skills and p.Skills.Install then pcall(p.Skills.Install) end
+end
 local PM = rawget(_G, "PlayerManager")
 if not PM or type(PM.selected_equipment) ~= "function" then return end
 if PM._pdti_deploy_patched then return end
@@ -77,9 +82,10 @@ patch("check_equipment_placement_valid", function(original)
             and tweak_data.equipments[equipment]
         if data then
             local ext = player and player.equipment and player:equipment()
-            if ext and type(ext.valid_shape_placement) == "function" then
-                local ok, valid = pcall(ext.valid_shape_placement, ext, equipment, data)
-                return ok and valid and true or false
+            if ext and dep.ValidPlacement then
+                -- The game's own check for the kind: on a wall (trip mine,
+                -- ECM, spy camera), on yourself (armor kit) or like a bag.
+                return dep.ValidPlacement(ext, entry.pdti_item) and true or false
             end
         end
         return original(self, player, equipment, ...)
@@ -117,6 +123,65 @@ patch("use_selected_equipment", function(original)
             expire_timer = entry.action_timer,
             redirect = nil
         }
+    end
+end)
+
+-- A deployable used up by an interaction instead of being placed: a trip mine
+-- set as a shaped charge on a safe or a door. The game asks its own count
+-- (has_deployable_left) and takes one (remove_equipment); a trip mine in
+-- your rig or pockets counts too, and is taken when the game has none.
+patch("has_deployable_left", function(original)
+    return function(self, equipment, slot, ...)
+        if original(self, equipment, slot, ...) then return true end
+        local dep = deployables()
+        return dep ~= nil and dep.ItemToHandFor ~= nil and dep.ItemToHandFor(equipment) ~= nil
+    end
+end)
+
+patch("remove_equipment", function(original)
+    return function(self, equipment_id, slot, ...)
+        local dep = deployables()
+        if dep and dep.GameCount and dep.GameCount(equipment_id, slot) < 1 then
+            local item_id = dep.ItemToHandFor and dep.ItemToHandFor(equipment_id)
+            if item_id then
+                dep.Consume(item_id)
+                if dep.Changed then pcall(dep.Changed) end
+                if _G.log then _G.log("[PDTI DEPLOY] used a " .. tostring(item_id) .. " from the inventory") end
+                return
+            end
+            -- The game has none either: its own code would fail on it.
+            if not (self.has_equipment and self:has_equipment(equipment_id)) then return end
+        end
+        return original(self, equipment_id, slot, ...)
+    end
+end)
+
+-- A sentry gun picked up goes back into the inventory, not to the game's
+-- equipment count (when there is room; else the game keeps it).
+patch("add_sentry_gun", function(original)
+    return function(self, num, sentry_type, ...)
+        local dep = deployables()
+        if dep and dep.OnSentryPickedUp and (num or 1) > 0 then
+            local ok, stored = pcall(dep.OnSentryPickedUp, sentry_type)
+            if ok and stored then return end
+        end
+        return original(self, num, sentry_type, ...)
+    end
+end)
+
+-- A client: the host placed the sentry gun asked for. When it came from the
+-- inventory, the item is taken out (the game's count is left alone).
+patch("from_server_equipment_place_result", function(original)
+    return function(self, selected_index, unit, sentry_gun_unit, ...)
+        local dep = deployables()
+        if dep and dep.pending_sentry then
+            if alive(unit) and alive(sentry_gun_unit) then
+                pcall(function() unit:equipment():from_server_sentry_gun_place_result(sentry_gun_unit:id()) end)
+            end
+            pcall(dep.OnSentryPlaced)
+            return
+        end
+        return original(self, selected_index, unit, sentry_gun_unit, ...)
     end
 end)
 

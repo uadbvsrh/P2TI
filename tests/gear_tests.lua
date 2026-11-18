@@ -57,6 +57,38 @@ T("a magazine in the second section is to hand", (function()
   for _, n in ipairs(PDTI.Ammo.ACTIVE) do if n == "rig_2" then return true end end
 end)())
 
+-- 0.19.9: the ammunition slots take armour plates, and the assault rig's
+-- ammunition part is not full by weight long before it is full of rounds.
+equip("assault_rig")
+T("an armour plate goes in the assault rig's ammunition slots", add("rig", "armor_kit") == true)
+T("but not in the ammo bag part", add("rig_2", "armor_kit") == false)
+equip("medical_rig")
+T("and in the medical rig's pouches (turned)", add("rig_2", "armor_kit") == true)
+equip("assault_rig")
+local shells = { queue_key = "SG", mag_class = "shotgun", slot = "secondary" }
+local stacks = 0
+for _ = 1, 6 do if PDTI.AddItemAuto("rig", "loose_ammo", 100, shells, true) then stacks = stacks + 1 end end
+T("six stacks of 100 shotgun shells fit (27 kg)", stacks == 6, stacks)
+local ok_mag = add("rig", "spare_magazine", { queue_key = "AR", rounds = 30, capacity = 30, mag_class = "assault_rifle" })
+T("and a magazine on top", ok_mag == true)
+-- 0.21.1: no weight cap in the rig, only its slots.
+local more = 0
+while PDTI.AddItemAuto("rig", "loose_ammo", 100, shells, true) do more = more + 1 end
+local _, why = PDTI.AddItemAuto("rig", "loose_ammo", 100, shells, true)
+T("the rig has no weight cap: shells fill every slot (85 kg)", stacks + more == 19
+  and PDTI.GetContainerInfo("rig").weight > 80, (stacks + more) .. " stacks")
+T("and only a full grid refuses more", tostring(why):find("weight", 1, true) == nil, why)
+equip("medical_rig")
+local kits = 0
+while add("rig", "first_aid_kit") do kits = kits + 1 end
+T("the medical rig's kit part is limited by its slots too", kits == 16, kits)
+equip("assault_rig", "small_backpack")
+local in_pack = 0
+while PDTI.AddItemAuto("backpack", "loose_ammo", 100, shells, true) do in_pack = in_pack + 1 end
+local _, pack_why = PDTI.AddItemAuto("backpack", "loose_ammo", 100, shells, true)
+T("the backpack keeps its weight cap, and says so", in_pack == 3
+  and tostring(pack_why):find("the backpack is full by weight", 1, true) ~= nil, in_pack .. " " .. tostring(pack_why))
+
 equip("general_rig")
 T("general rig: 18 slots for anything (3x6)", size("rig") == "3x6", size("rig"))
 T("anything a rig holds goes in it", add("rig", "first_aid_kit") and add("rig", "ammo_bag") and add("rig", "spare_magazine", { capacity = 30 }))

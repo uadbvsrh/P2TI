@@ -106,8 +106,10 @@ T("it ends 50% sooner than the first would have (2 s / 1.5 from the first tap)",
 T("a third tap does not stack", Ammo.TryFastReload(st, 10.4, wep, st.check) == false)
 NewRaycastWeaponBase.on_reload(wep)
 T("a full magazine is loaded", wep.clip == 30, wep.clip)
-T("the old magazine is gone", #mags(key) == 2, #mags(key))
-T("its rounds are gone too (not loose)", loose_total(key) == loose_before, loose_total(key))
+-- No magazine fell (no "Drop My Mag" in this test): nothing to pick up, so
+-- it is not lost.
+T("the old magazine could not fall: it is kept", #mags(key) == 3, #mags(key))
+T("its rounds stay in it (not loose)", loose_total(key) == loose_before, loose_total(key))
 T("the next reload is normal again", near(speed(wep), 1) and wep._pdti_dump == nil)
 
 -- Interrupted (weapon switch): the fast reload is forgotten.
