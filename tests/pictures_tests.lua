@@ -474,11 +474,29 @@ T("a right click on the AMCAR in PRI: its view", right_press({ container = "hand
 local shop = named("pdti_shop")
 local big = shop:find("inspect_picture")
 local bp1 = big and pics(big)[1]
-T("  its picture at the top, under its name", bp1 ~= nil and bp1.params.texture == WEP .. "amcar"
+-- The slots of the weapon view, in the bands (the first ones on top of the
+-- weapon, the last ones under it).
+local function slot_boxes()
+  local out = {}
+  for i = 1, 40 do
+    local s = named("pdti_shop"):find("inspect_slot_" .. i)
+    if not s then break end
+    out[#out + 1] = s
+  end
+  return out
+end
+T("  its picture in the middle of the view: the slots on top of it above, the ones under it below", bp1 ~= nil
+  and bp1.params.texture == WEP .. "amcar"
   and big.params.position[2] > shop:find("inspect_label").params.position[2]
-  and shop:find("inspect_weight").params.position[2] >= big.params.position[2] + big.ph)
-T("  72 high, centred, its shape kept", big ~= nil and big.ph == 72 and near(bp1.params.h, 72) and near(bp1.params.w, 144)
-  and near(bp1.params.x, (big.pw - 144) / 2), bp1 and (bp1.params.w .. "x" .. bp1.params.h))
+  and shop:find("inspect_weight").params.position[2] <= big.params.position[2]
+  and (function()
+    local boxes = slot_boxes()
+    local top, bottom = boxes[1], boxes[#boxes]
+    return top and bottom and top.params.position[2] + top.ph <= big.params.position[2]
+      and bottom.params.position[2] >= big.params.position[2] + big.ph
+  end)())
+T("  120 high, centred, its shape kept", big ~= nil and big.ph == 120 and near(bp1.params.h, 120) and near(bp1.params.w, 240)
+  and near(bp1.params.x, (big.pw - 240) / 2), bp1 and (bp1.params.w .. "x" .. bp1.params.h))
 local function slot_box(prefix)
   for i = 1, 40 do
     local s = shop:find("inspect_slot_" .. i)
@@ -555,6 +573,7 @@ shop = named("pdti_shop")
 local mp = shop:find("wmarket_picture")
 T("  the AMCAR picked: its picture above Buy", mp ~= nil and #pics(mp) == 1 and pics(mp)[1].params.texture == WEP .. "amcar"
   and shop:find("wmarket_buy").params.position[2] >= mp.params.position[2] + mp.ph)
+windows()[1]:find("wmarket_page_secondaries"):click()
 windows()[1]:find("wmarket_prices"):find("wmarket_price_glock_17"):click()
 shop = named("pdti_shop")
 T("  the Chimano (none): Buy right under its stock", shop:find("wmarket_picture") == nil
@@ -607,6 +626,10 @@ T("the setting off: no pictures anywhere", all_pics() == 0 and named("pdti_shop"
 PDTI.SetUIOpen(false)
 PDTI.OpenMarket()
 named("pdti_shop"):find("market_tab_weapons"):click()
+T("  (the market keeps the page you were on)", windows()[1]:find("wmarket_page_secondaries").params.background_color
+  ~= windows()[1]:find("wmarket_page_primaries").params.background_color
+  and windows()[1]:find("wmarket_prices"):find("wmarket_price_glock_17") ~= nil)
+windows()[1]:find("wmarket_page_primaries"):click()
 windows()[1]:find("wmarket_prices"):find("wmarket_price_amcar"):click()
 arrive()
 menu():update()

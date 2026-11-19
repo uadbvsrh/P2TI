@@ -306,8 +306,8 @@ function Market.History(carry_id)
     return out
 end
 
--- Every loot type you can capture (one per name), by name: { carry_id, name,
--- real, now, change, stashed }. The stash's own rule (Stash.IsLootBag: a bag
+-- Every loot type you can capture (one per name), dearest today first (0.44.1;
+-- the same price: by name): { carry_id, name, real, now, change, stashed }. The stash's own rule (Stash.IsLootBag: a bag
 -- with a value of its own, not small loot, a vehicle or a mission item that
 -- is not secured), so mission items (engines, bike parts, batteries...) are
 -- not in it.
@@ -350,6 +350,7 @@ function Market.Catalog()
         end
     end
     table.sort(out, function(a, b)
+        if a.now ~= b.now then return a.now > b.now end
         if a.name:lower() ~= b.name:lower() then return a.name:lower() < b.name:lower() end
         return a.carry_id < b.carry_id
     end)

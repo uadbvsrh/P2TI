@@ -256,15 +256,30 @@ add_bag("money", 2, 9000)
 local cat = Market.Catalog()
 local by = {}
 for _, r in ipairs(cat) do by[r.carry_id] = r end
-T("the list: every loot type with a value, by name", #cat == 3 and cat[1].name == "diamonds" and cat[2].name == "gold"
-  and cat[3].name == "money", #cat)
+T("the list: every loot type with a value, dearest today first (0.44.1)", #cat == 3 and cat[1].name == "gold"
+  and cat[2].name == "money" and cat[3].name == "diamonds", #cat)
 T("  not small loot, not vehicles, not without a value", not by.gold_ring and not by.gold_car and not by.person
   and not by.circuit)
 T("  now and real; how many are in the stash", by.money.real == 1500 and by.money.now == 1500 and by.money.stashed == 2
   and by.gold.stashed == 0)
 Market.DriftRoll = function() return 1 end
-T("  now follows today's change", Market.Catalog()[2].now == 3450 and Market.Catalog()[2].change == "+20%")
+T("  now follows today's change", Market.Catalog()[1].now == 3450 and Market.Catalog()[1].change == "+20%")
+-- Today's price decides the order, not the real one: money up, gold down.
+Market.DriftRoll = function(id) return id == "money" and 1 or (id == "gold" and 0 or 0.5) end
+cat = Market.Catalog()
+T("  today's price, not the real one: gold down 20% ($2300) still above money up 20% ($1800)",
+  cat[1].carry_id == "gold" and cat[1].now == 2300 and cat[2].now == 1800, cat[1].now .. "/" .. cat[2].now)
+tweak_data.money_manager.bag_values.money = 1920
+Market.DriftRoll = function(id) return id == "money" and 1 or (id == "gold" and 0 or 0.5) end
+cat = Market.Catalog()
+T("  a cheaper real price that is dearer today comes first", cat[1].carry_id == "money" and cat[1].real < cat[2].real
+  and cat[1].now >= cat[2].now, cat[1].carry_id)
+tweak_data.money_manager.bag_values.money = 1500
+tweak_data.money_manager.bag_values.diamonds = 1500
 Market.DriftRoll = function() return 0.5 end
+cat = Market.Catalog()
+T("  the same price: by name", cat[2].name == "diamonds" and cat[3].name == "money", cat[2].name)
+tweak_data.money_manager.bag_values.diamonds = 1000
 
 -- The 7 days.
 local h = Market.History("gold")

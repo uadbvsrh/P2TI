@@ -491,6 +491,8 @@ local function make_mission_end(orig)
             local aok, aerr = pcall(armory.OnMissionEnd, self._success == true)
             if not aok then log("the armory failed at the end: " .. tostring(aerr)) end
         end
+        -- The body parts as the heist left them (body_lasting.lua).
+        if PDTI.BodyLasting then pcall(PDTI.BodyLasting.OnMissionEnd) end
         pcall(function()
             log("the game's payout for bags: " .. tostring(managers.money:get_payouts().bag_payout))
         end)

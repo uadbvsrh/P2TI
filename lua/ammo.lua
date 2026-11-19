@@ -492,7 +492,7 @@ Ammo.PRICES = {
         explosive = 150, penetrator = 220 },
     magazine = { compact = 600, standard = 1000, extended = 2000, drum = 5000 },
     item = {
-        first_aid_kit = 4000, doctor_bag = 12000, ammo_bag = 10000, bodybags_bag = 3000,
+        first_aid_kit = 4000, doctor_bag = 35000, ammo_bag = 10000, bodybags_bag = 3000,
         bandage = 500, painkillers = 800, grenade = 2500, ecm_battery = 5000, armor_kit = 6000,
         trip_mine = 1500, ecm_jammer = 8000, spy_camera = 3000, sentry_gun = 15000,
         sentry_gun_silent = 15000, grenade_crate = 10000, armor_bag = 6000

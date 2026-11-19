@@ -341,8 +341,15 @@ dialog = true
 MenuMainState.at_enter({}, {})
 T("a dialog at the menu: it waits", Home.pending ~= nil and #went == 0)
 dialog = false
+local ins_ticks, real_ins = 0, PDTI.Insurance.Tick
+PDTI.Insurance.Tick = function() ins_ticks = ins_ticks + 1 end
 for _ = 1, 3 do MenuMainState.update({}, 0, 0.1) end
 T("the menu's update takes you there once it is closed", seen.update == 3 and went[2] == "chill", table.concat(went, ","))
+T("  and looks at insured weapons coming back, every frame (0.45.0)", ins_ticks == 3, ins_ticks)
+Home.pending = nil
+MenuMainState.update({}, 0, 0.1)
+T("  also with no trip waiting", ins_ticks == 4 and seen.update == 4)
+PDTI.Insurance.Tick = real_ins
 boot()
 Global.boot_invite = { lobby = 1 }
 MenuMainState.at_enter({}, {})
@@ -443,12 +450,13 @@ tweak_data.safehouse = { rooms = {
   { room_id = "russian", name_id = "menu_russian", help_id = "menu_cs_help_dallas", tier_max = 3 },
   { room_id = "spanish", name_id = "menu_spanish", help_id = "menu_cs_help_chains", tier_max = 3 },
   { room_id = "ecp", name_id = "menu_ecp", help_id = "menu_cs_help_ecp", tier_max = 3 },
-  { room_id = "terry", name_id = "menu_terry", help_id = "menu_cs_help_terry", tier_max = 3 }
+  { room_id = "terry", name_id = "menu_terry", help_id = "menu_cs_help_terry", tier_max = 3 },
+  { room_id = "myh", name_id = "menu_myh", help_id = "menu_cs_help_myh", tier_max = 3 }
 } }
 _G.CriminalsManager = { convert_new_to_old_character_workname = function(w)
   return ({ hoxton = "american", wolf = "german", dallas = "russian", chains = "spanish" })[w] or w end }
-local coins, tiers, unlocked, bought = 30, { german = 1, russian = 3, ecp = 1, spanish = 3, terry = 3 },
-  { german = 1, russian = 3, ecp = 1, spanish = 3, terry = 3 }, {}
+local coins, tiers, unlocked, bought = 30, { german = 1, russian = 3, ecp = 1, spanish = 3, terry = 3, myh = 1 },
+  { german = 1, russian = 3, ecp = 1, spanish = 3, terry = 3, myh = 1 }, {}
 local PRICES = { 0, 12, 24 }
 managers.custom_safehouse = {
   get_room_current_tier = function(_, r) return tiers[r] end,
@@ -497,6 +505,27 @@ button(d, "Menu inventory").callback_func()
 T("Menu inventory: the game's own way out, marked for the way back", left == 1 and Global.pdti_home.to_inventory == true
   and logged("leaving for the menu inventory"))
 Global.pdti_home.to_inventory = nil
+PDTI.SetUIOpen(false)
+-- 0.43.0: Duke's room, the game's Story Line (offline).
+local was_single = Global.game_settings.single_player
+Global.game_settings.single_player = true
+local duke = setmetatable({ character = "myh" }, { __index = CivilianHeisterInteractionExt })
+CivilianHeisterInteractionExt.interact(duke, {})
+d = dialogs[#dialogs]
+T("Duke's room: Story Line first (picked), then Upgrade and Close", d.title == "menu_myh" and #d.button_list == 3
+  and d.button_list[1].text:find("^Story Line") and d.focus_button == 1 and button(d, "Upgrade to tier 2")
+  and d.button_list[3].cancel_button == true)
+button(d, "Story Line").callback_func()
+T("  Story Line: the game's own way out, marked for the way back", left == 2 and Global.pdti_home.to_story == true
+  and Global.pdti_home.to_inventory == nil and logged("leaving for the Story Line"))
+Global.pdti_home.to_story = nil
+CivilianHeisterInteractionExt.interact(chains, {})
+T("  no other room has it", not button(dialogs[#dialogs], "Story Line") and #dialogs[#dialogs].button_list == 2)
+Global.game_settings.single_player = false
+CivilianHeisterInteractionExt.interact(duke, {})
+T("  online: no Story Line, it stays the game's", not button(dialogs[#dialogs], "Story Line")
+  and Home.ToStoryLine() == false and Global.pdti_home.to_story == nil and left == 2)
+Global.game_settings.single_player = was_single
 PDTI.SetUIOpen(false)
 local dallas = setmetatable({ character = "dallas" }, { __index = CivilianHeisterInteractionExt })
 CivilianHeisterInteractionExt.interact(dallas, {})
@@ -675,6 +704,53 @@ managers.menu.open_node = function() error("no such page") end
 Home.OnMenuMain(false)
 Home.MenuTick(0.6)
 T("the page cannot open: logged, you stay in the menu", #went == 0 and logged("could not open: "))
+-- 0.43.0: back in the menu after leaving for Duke's Story Line.
+local function chills()
+  local n = 0
+  for _, w in ipairs(went) do if w == "chill" then n = n + 1 end end
+  return n
+end
+local function story_trip()
+  inventory_trip()
+  Global.pdti_home = { booted = true, to_story = true }
+end
+story_trip()
+T("back from Duke: the Story Line trip is planned", Home.OnMenuMain(false) == true and Global.pdti_home.to_story == nil
+  and Home.pending ~= nil and Home.pending.node == "story_missions" and not covered()
+  and logged("the Story Line: back to the safehouse when you return"))
+Home.MenuTick(0)
+T("  not in the menu's first frame", #nodes_opened == 0 and #went == 0)
+Home.MenuTick(0.6)
+T("  then the Story Line page opens, offline first", nodes_opened[1] == "story_missions" and went[1] == "single"
+  and #went == 1 and logged("opening the menu's \"story_missions\" page (try 1)"))
+node = "crimenet_contract_singleplayer"
+for _ = 1, 40 do Home.MenuTick(1) end
+T("  on the Story Line and a heist's contract: no trip, no time limit", #went == 1 and Home.pending ~= nil
+  and logged("in the menu's \"crimenet_contract_singleplayer\" page"))
+node = "main"
+Home.MenuTick(0.1)
+T("  back to the menu's first page: the safehouse", chills() == 1 and Home.pending == nil
+  and Global.pdti_home.skip_briefing == true and logged("loading the safehouse (back from the Story Line)"))
+story_trip()
+managers.menu.open_node = function(_, name) nodes_opened[#nodes_opened + 1] = name end
+Home.OnMenuMain(false)
+Home.MenuTick(0.6)
+Home.MenuTick(2)
+for _ = 1, 10 do Home.MenuTick(1) end
+T("  the page does not open: tried twice, then you are told", #nodes_opened == 2 and chills() == 0
+  and Home.pending ~= nil and logged("the Story Line page did not open: open it yourself")
+  and hints[#hints] and hints[#hints]:find("Open the Story Line yourself", 1, true))
+story_trip()
+managers.menu.open_node = function() error("no such page") end
+Home.OnMenuMain(false)
+Home.MenuTick(0.6)
+T("  the page cannot open: logged, you stay in the menu", chills() == 0
+  and logged("the Story Line page could not open: ") and logged("no such page"))
+story_trip()
+Ammo.settings.safehouse_home = false
+T("  with the option off too (the trip was yours)", Home.OnMenuMain(false) == true and Home.pending.node == "story_missions")
+Ammo.settings.safehouse_home = true
+Home.pending = nil
 -- 0.31.1: the laptop takes you to the Contract Broker.
 local exits2 = 0
 local base_interacts = 0

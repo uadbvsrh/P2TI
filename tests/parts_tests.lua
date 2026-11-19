@@ -180,7 +180,7 @@ local function buy(weapon_id, part_id) return P.Buy(weapon_id, part_id) end
 local function fill_all()
   local n = 0
   for _, c in ipairs(P.PLACES) do
-    for _ = 1, 200 do
+    for _ = 1, 1000 do
       if not PDTI.AddItemAuto(c, P.ITEM_ID, 1, P.MakeData("s_red", "amcar", 9000 + n), false) then break end
       n = n + 1
     end
@@ -243,7 +243,7 @@ PDTI.session_only = true
 local okh, whyh = buy("amcar", "s_red")
 T("  in a heist the market is closed", okh == false and whyh:find("heist") ~= nil)
 PDTI.session_only = false
-for i = 1, 200 do
+for i = 1, 1000 do
   if not PDTI.AddItemAuto("locker", P.ITEM_ID, 1, P.MakeData("s_red", "amcar", 9000 + i), false) then break end
 end
 before = money
@@ -884,11 +884,14 @@ T("a won heist: they are kept", #part_items("b_supp") == 1)
   shop = named("pdti_shop")
   T("  a fitted part is in its slot", table.concat(texts(), "|") == "Sight\ns_red|Lower receiver\nstandard",
     table.concat(texts(), "|"))
-  T("  three boxes a row, the help under them", (function()
+  T("  its slots around the picture: the sight on top of it, the lower receiver under it", (function()
     local one, two = shop:find("inspect_slot_1").params, shop:find("inspect_slot_2").params
+    local top_label = shop:find("inspect_slots_top").params
+    local bottom_label = shop:find("inspect_slots_bottom").params
     local help = shop:find("inspect_slots_help").params
-    return two.position[2] == one.position[2] and two.position[1] > one.position[1] + one.w - 1
-      and help.position[2] >= one.position[2] + one.size
+    return one.position[2] >= top_label.position[2] and one.position[2] < bottom_label.position[2]
+      and two.position[2] >= bottom_label.position[2]
+      and help.position[2] >= bottom_label.position[2]
   end)())
   T("  your part's box has a part's colour, the weapon's own is grey", (function()
     local mine, own = shop:find("inspect_slot_1").params.background_color, shop:find("inspect_slot_2").params.background_color
@@ -996,13 +999,13 @@ T("a won heist: they are kept", #part_items("b_supp") == 1)
   T("the free AMCAR: no price", tostring(named("pdti_shop"):find("inspect_sell").params.text):find("nothing", 1, true) ~= nil)
   rows = texts()
   T("  an empty slot's box is darker than one with the weapon's own part", (function()
-    local own, empty = named("pdti_shop"):find("inspect_slot_2").params.background_color,
-      named("pdti_shop"):find("inspect_slot_3").params.background_color
+    local empty, own = named("pdti_shop"):find("inspect_slot_3").params.background_color,
+      named("pdti_shop"):find("inspect_slot_4").params.background_color
     return own[1] + own[2] + own[3] > empty[1] + empty[2] + empty[3]
   end)())
-  T("  every slot, in order: a named part of its own by name, a skin's part fixed, the empty ones", table.concat(rows, "|")
-    == "Sight\nIron Sights|Barrel\nstandard|Muzzle\nempty|Lower receiver\nstandard|Vertical grip\nempty|Stock\nstandard"
-    .. "|Magazine\nstandard|Gadget\nempty|Custom\nx_skin (fixed)", table.concat(rows, "|"))
+  T("  every slot, in order: the ones on top of the weapon first, then the ones under it", table.concat(rows, "|")
+    == "Sight\nIron Sights|Gadget\nempty|Vertical grip\nempty|Stock\nstandard|Magazine\nstandard"
+    .. "|Custom\nx_skin (fixed)|Muzzle\nempty|Barrel\nstandard|Lower receiver\nstandard", table.concat(rows, "|"))
   T("  the count", tostring(named("pdti_shop"):find("inspect_parts_label").params.text) == "Slots  (9; 0 part(s) of yours)",
     named("pdti_shop"):find("inspect_parts_label").params.text)
   FP.amcar_irons.name_id = "amcar_irons"
@@ -1088,6 +1091,172 @@ T("a won heist: they are kept", #part_items("b_supp") == 1)
   T("the Loot tab: the parts list goes", named("pdti_shop"):find("wmarket_parts") == nil)
   T("only documented MenuUI parameters used", #ENV.violations == 0, table.concat(ENV.violations, ","))
   PDTI.SetUIOpen(false)
+end)()
+
+-- 0.44.0: a dragged part marks green every weapon of yours that takes it.
+;(function()
+  fresh() -- the AMCAR in PRI, the Chimano in SEC
+  A.Buy("new_m4") -- (the locker)
+  buy("amcar", "s_red") -- the AMCAR and the CAR-4 take it
+  buy("amcar", "b_supp") -- the AMCAR and the Chimano take it
+  local function windows() return ENV.menus[#ENV.menus].children end
+  local function named(n) for _, w in ipairs(windows()) do if w.params.name == n then return w end end end
+  T("the screen opens", PDTI.ToggleUI() == true)
+  named("pdti_shop"):find("shop_tab_locker"):click()
+  -- Which weapons the drawn cells with a mark belong to (their names).
+  local function marked()
+    local names, n = {}, 0
+    local function walk(node)
+      for _, c in ipairs(node.children or {}) do
+        local cname = tostring(c.params and c.params.name or "")
+        local cn, x, y = cname:match("^cell_(.+)_(%d+)_(%d+)$")
+        local slot = cname:match("^weapon_box_(%a+)$") -- PRI, SEC: one cell
+        if slot then cn, x, y = "hand_" .. slot, "0", "0" end
+        for _, r in ipairs(c.rects or {}) do
+          if r.params.name == "pdti_fit_mark" and cn then
+            n = n + 1
+            local id = PDTI.GetOccupancyMap(cn).cells[tonumber(y) + 1][tonumber(x) + 1]
+            local it = id and PDTI.FindItem(cn, id)
+            names[it and it.data and it.data.name or "?"] = true
+          end
+        end
+        walk(c)
+      end
+    end
+    for _, w in ipairs(windows()) do walk(w) end
+    local list = {}
+    for k in pairs(names) do list[#list + 1] = k end
+    table.sort(list)
+    return table.concat(list, ","), n
+  end
+  local menu = ENV.menus[#ENV.menus].params
+  local real_hit = PDTI._UIHit
+  PDTI._UIHit = function() return "window" end
+  T("nothing held: no marks", PDTI.UIFitWeapons() == nil and select(2, marked()) == 0)
+  local function drag(part_id)
+    local c, id = where_part(part_id)
+    local it = PDTI.FindItem(c, id)
+    PDTI.UIDragStart(c, it.x, it.y)
+    menu.pre_mouse_move(5, 5)
+  end
+  drag("s_red")
+  local fits = PDTI.UIFitWeapons()
+  local _, _, amcar = weapon(A.HandItem("primaries").data.uid)
+  T("a sight held: the weapons that take it, wherever they are", fits ~= nil and fits.hand_primary ~= nil
+    and fits.locker ~= nil and fits.hand_secondary == nil and amcar.weapon_id == "amcar")
+  local names, n = marked()
+  T("  marked green: the AMCAR (PRI) and the CAR-4 (locker), every cell of each, not the Chimano",
+    names == "AMCAR,CAR-4" and n >= 9, names .. " " .. n)
+  menu.pre_mouse_move(6, 6)
+  T("  the mouse moves: marked once, not again on top", select(2, marked()) == n, select(2, marked()))
+  menu.pre_mouse_release("0", 6, 6)
+  T("  let go (in the window): the marks go, the part stays", select(2, marked()) == 0 and #part_items("s_red") == 1)
+  drag("b_supp")
+  T("a muzzle held: the AMCAR and the Chimano", (marked()) == "AMCAR,Chimano 88", (marked()))
+  menu.pre_mouse_release("0", 6, 6)
+  fit("s_red", amcar.uid)
+  buy("amcar", "s_holo")
+  drag("s_holo")
+  T("  a weapon that has one of its kind on already: still marked", (marked()) == "AMCAR,CAR-4", (marked()))
+  menu.pre_mouse_release("0", 6, 6)
+  local _, band = PDTI.AddItemAuto("pockets", "bandage", 1, nil, true)
+  PDTI.UIDragStart("pockets", band.x, band.y)
+  menu.pre_mouse_move(5, 5)
+  T("not a part held: no marks", PDTI.UIFitWeapons() == nil and select(2, marked()) == 0)
+  menu.pre_mouse_release("0", 6, 6)
+  T("only documented MenuUI parameters used", #ENV.violations == 0, table.concat(ENV.violations, ","))
+  PDTI._UIHit = real_hit
+  PDTI.SetUIOpen(false)
+end)()
+
+-- 0.44.0: the game's own weapon mods (its drops) move into the locker.
+;(function()
+  fresh()
+  local inv = { normal = { weapon_mods = { s_holo = 2, b_supp = 1, a_slug = 3, no_such_part = 1, x_skin = 1 } },
+    gage_pack = { weapon_mods = { s_dlc = 1 } } }
+  local saves = 0
+  managers.savefile = { save_progress = function() saves = saves + 1 end }
+  local bm = managers.blackmarket
+  bm.get_inventory_category = function(_, cat)
+    local t = {}
+    for gv, cats in pairs(inv) do
+      for id, n in pairs(cats[cat] or {}) do t[#t + 1] = { id = id, global_value = gv, amount = n } end
+    end
+    return t
+  end
+  bm.remove_item = function(_, gv, cat, id)
+    local c = inv[gv] and inv[gv][cat]
+    if not c or not c[id] or not MODS[id] then return false end
+    c[id] = c[id] - 1
+    if c[id] <= 0 then c[id] = nil end
+    return true
+  end
+  bm.add_to_inventory = function(_, gv, cat, id)
+    inv[gv] = inv[gv] or {}
+    inv[gv][cat] = inv[gv][cat] or {}
+    inv[gv][cat][id] = (inv[gv][cat][id] or 0) + 1
+  end
+  local function logged(text)
+    for _, l in ipairs(ENV.logs) do if tostring(l):find(text, 1, true) then return true end end
+    return false
+  end
+  local real_hint = PDTI.Hint
+  local hints = {}
+  PDTI.Hint = function(t) hints[#hints + 1] = t end
+  _G.PDTI_SEPARATE_SAVE = nil
+  T("the game's own save (not the mod's): its mods stay, said once", P.ImportGameMods() == 0
+    and inv.normal.weapon_mods.s_holo == 2 and #part_items("s_holo") == 0 and logged("stay in its inventory"))
+  _G.PDTI_SEPARATE_SAVE = true
+  PDTI.session_only = true
+  T("  in a heist: nothing", P.ImportGameMods() == 0 and inv.normal.weapon_mods.s_holo == 2)
+  PDTI.session_only = false
+  local moved, waiting = P.ImportGameMods()
+  T("the mod's own save: every mod a part item in the locker", moved == 4 and waiting == 0
+    and #part_items("s_holo") == 2 and #part_items("b_supp") == 1 and #part_items("s_dlc") == 1
+    and where_part("s_holo") == "locker", moved .. "/" .. tostring(waiting))
+  local dlc = part_items("s_dlc")[1].item.data
+  T("  each its own item, with its global value, a uid and its size", dlc.global_value == "gage_pack" and dlc.uid ~= nil
+    and part_items("s_holo")[1].item.data.uid ~= part_items("s_holo")[2].item.data.uid and dlc.ptype == "sight")
+  T("  gone from the game's inventory (never counted twice)", inv.normal.weapon_mods.s_holo == nil
+    and inv.normal.weapon_mods.b_supp == nil and inv.gage_pack.weapon_mods.s_dlc == nil)
+  T("  ammunition and what has no part (or no black market entry) stay the game's, not waiting",
+    inv.normal.weapon_mods.a_slug == 3 and inv.normal.weapon_mods.no_such_part == 1
+    and inv.normal.weapon_mods.x_skin == 1 and #part_items("a_slug") == 0 and not logged("wait in its inventory"))
+  T("  the game's progress saved once, told", saves == 1 and logged("4 weapon mod(s) from the game moved")
+    and tostring(hints[#hints]):find("4 weapon mod(s)", 1, true) ~= nil)
+  T("again: nothing more, no save", P.ImportGameMods() == 0 and saves == 1 and #part_items("s_holo") == 2)
+  -- A drop after a heist: the next menu.
+  inv.normal.weapon_mods.st_tactical = 1
+  T("a new drop: moved at the next menu", A.OnMenu() and #part_items("st_tactical") == 1
+    and inv.normal.weapon_mods.st_tactical == nil and saves == 2)
+  -- No room: they wait in the game's inventory.
+  local filler = 0
+  while PDTI.AddItemAuto("locker", P.ITEM_ID, 1, P.MakeData("g_vert", nil, 5000 + filler), true) do filler = filler + 1 end
+  while PDTI.AddItemAuto("locker", P.ITEM_ID, 1, P.MakeData("s_red", nil, 7000 + filler), true) do filler = filler + 1 end
+  inv.normal.weapon_mods.s_holo = 2
+  inv.normal.weapon_mods.g_vert = 1
+  moved, waiting = P.ImportGameMods()
+  T("the locker full: they wait in the game's inventory, told", moved == 0 and waiting == 3
+    and inv.normal.weapon_mods.s_holo == 2 and inv.normal.weapon_mods.g_vert == 1 and saves == 2
+    and logged("3 weapon mod(s) from the game wait") and tostring(hints[#hints]):find("wait", 1, true) ~= nil,
+    moved .. "/" .. tostring(waiting))
+  local e = part_items("s_red")[1]
+  PDTI.RemoveItem(e.container, e.item.instance_id)
+  moved, waiting = P.ImportGameMods()
+  T("  one small place: a sight goes in, a big grip still waits", moved == 1 and waiting == 2
+    and inv.normal.weapon_mods.s_holo == 1 and inv.normal.weapon_mods.g_vert == 1, moved .. "/" .. tostring(waiting))
+  T("  the hint says what came in (the wait is in the log)", tostring(hints[#hints]):find("1 weapon mod(s) you got are in", 1, true)
+    ~= nil, hints[#hints])
+  -- The locker refuses it after all: back to the game's inventory.
+  local e2 = part_items("g_vert")[1]
+  PDTI.RemoveItem(e2.container, e2.item.instance_id)
+  local real_add = PDTI.AddItemAuto
+  PDTI.AddItemAuto = function() return false, "no" end
+  moved = P.ImportGameMods()
+  PDTI.AddItemAuto = real_add
+  T("  refused after it left the game's inventory: given back", moved == 0 and inv.normal.weapon_mods.s_holo == 1)
+  PDTI.Hint = real_hint
+  _G.PDTI_SEPARATE_SAVE = nil
 end)()
 
 print(string.format("\n%d passed, %d failed", pass, fail))

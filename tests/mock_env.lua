@@ -68,7 +68,8 @@ end
 
 function M.load_mod(root, with_ui)
   local parts = { "items", "perks", "inventory", "ammo", "plan", "item_use", "ui_model", "ui_interaction",
-    "loot", "loot_quality", "stash", "market", "armory", "armory_parts", "armory_hotmod", "save_slot", "safehouse", "deployables", "deploy_hud", "loadout", "gear", "carry" }
+    "loot", "loot_quality", "stash", "market", "armory", "armory_parts", "armory_templates", "armory_hotmod", "armory_insurance", "armory_wear", "armory_skins", "lobby",
+    "save_slot", "safehouse", "deployables", "deploy_hud", "loadout", "gear", "carry" }
   if with_ui then parts[#parts + 1] = "ui_pictures"; parts[#parts + 1] = "ui_beardlib" end
   for _, n in ipairs(parts) do dofile(root .. "lua/" .. n .. ".lua") end
   -- Every bag rolls "Standard" unless a test sets its own roll, so the

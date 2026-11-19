@@ -24,6 +24,10 @@
 --     into the safehouse (0.30.7). The room is the area around where Chains
 --     stands (the heisters stand in their rooms). The weapon racks are the
 --     game's again (the mod's own screen is on its key).
+--   * Duke's room (0.43.0): his menu's first button is the game's Story Line
+--     (offline). It leaves the safehouse for the main menu's Story Line page;
+--     start the next story heist from there, or back out to the menu's first
+--     page and the safehouse loads again (as the menu inventory does).
 --   * The laptop (the game's "exit to crime.net", 0.31.1): instead of just
 --     leaving, it takes you to crime.net with the Contract Broker open
 --     (offline). Pick a heist there and it starts as usual; back out of
@@ -45,6 +49,8 @@ Home.DELAY = 0           -- seconds in the main menu before going (0: at once)
 Home.GIVE_UP = 30        -- seconds to wait for a dialog to close, then stay
 Home.HINT_AFTER = 4      -- seconds in the safehouse before the hint
 Home.HINT_TIME = 7
+-- Rust and Houston list at most this many weapons, each with its own button.
+Home.REPAIR_BUTTONS = 5
 Home.PROBE = true
 Home.PROBE_RADIUS = 600  -- cm
 Home.PROBE_MAX = 20
@@ -116,9 +122,12 @@ function Home.OnMenuMain(invited)
     if not mem then return false end
     local to_inventory = mem.to_inventory == true
     local to_broker = mem.to_broker == true
+    local to_story = mem.to_story == true
     mem.to_inventory = nil
     mem.to_broker = nil
+    mem.to_story = nil
     local reason = (to_broker and "back from crime.net") or (to_inventory and "back from the inventory")
+        or (to_story and "back from the Story Line")
         or (not mem.booted and "the game started")
         or (mem.after_job == true and "a job ended") or nil
     -- Asked once: whatever comes of it, the next time in the menu you stay.
@@ -130,7 +139,7 @@ function Home.OnMenuMain(invited)
     pcall(Home.InstallRaidHooks)
     -- The trip to the menu inventory is yours: it comes back with the option
     -- off too.
-    if not reason or (not to_inventory and not to_broker and not Home.Enabled()) then return false end
+    if not reason or (not to_inventory and not to_broker and not to_story and not Home.Enabled()) then return false end
     local why = Home.Blocked(invited)
     if why then
         log("staying in the menu: " .. why)
@@ -144,6 +153,12 @@ function Home.OnMenuMain(invited)
     if to_inventory then
         Home.pending = { waited = 0, reason = reason, inventory = true }
         log("the menu inventory: back to the safehouse when you return to the menu's first page")
+        return true
+    end
+    if to_story then
+        Home.pending = { waited = 0, reason = reason, inventory = true, node = Home.STORY_NODE, what = "the Story Line",
+            offline = true }
+        log("the Story Line: back to the safehouse when you return to the menu's first page")
         return true
     end
     Home.pending = { waited = 0, reason = reason }
@@ -220,10 +235,11 @@ function Home.Go(reason)
     return ok
 end
 
--- The trip to the menu inventory: once the menu has settled, open its page
--- (again once if it did not open); back to the safehouse only after you
--- were on another page and are back on the first one. If the page will not
--- open you stay in the menu (open it yourself; the way back still works).
+-- The trip to the menu inventory (or Duke's to the Story Line: p.node, its
+-- name p.what): once the menu has settled, open its page (again once if it
+-- did not open); back to the safehouse only after you were on another page
+-- and are back on the first one. If the page will not open you stay in the
+-- menu (open it yourself; the way back still works).
 Home.INVENTORY_DELAY = 0.5 -- seconds in the menu before the page is opened
 Home.INVENTORY_RETRY = 2   -- seconds to see the page before trying again
 
@@ -233,9 +249,16 @@ local function open_inventory_page(p)
     local m = rawget(_G, "managers")
     local mm = m and m.menu
     if not mm or type(mm.open_node) ~= "function" then return false, "no menu" end
-    local ok, err = pcall(mm.open_node, mm, Home.INVENTORY_NODE)
-    log(ok and ("opening the menu's \"" .. Home.INVENTORY_NODE .. "\" page (try " .. p.tries .. ")")
-        or ("the inventory page could not open: " .. tostring(err)))
+    local page = p.node or Home.INVENTORY_NODE
+    -- The Story Line plays offline, as the safehouse does (the game's own
+    -- "crime.net offline" does the same before its page).
+    local mch = rawget(_G, "MenuCallbackHandler")
+    if p.offline and type(mch) == "table" and type(mch.play_single_player) == "function" then
+        pcall(mch.play_single_player, mch)
+    end
+    local ok, err = pcall(mm.open_node, mm, page)
+    log(ok and ("opening the menu's \"" .. page .. "\" page (try " .. p.tries .. ")")
+        or ((p.what or "the inventory") .. " page could not open: " .. tostring(err)))
     return ok, err
 end
 
@@ -268,8 +291,9 @@ function Home.InventoryTick(p)
     end
     if p.tries >= 2 and not p.gave_up and p.waited - p.asked_at >= Home.INVENTORY_RETRY then
         p.gave_up = true
-        log("the inventory page did not open: open it yourself, the safehouse loads when you come back here")
-        PDTI.Hint("Open the Inventory yourself: the safehouse loads again when you are back on this page.", Home.HINT_TIME)
+        log((p.what or "the inventory") .. " page did not open: open it yourself, the safehouse loads when you come back here")
+        PDTI.Hint("Open " .. (p.what or "the Inventory") .. " yourself: the safehouse loads again when you are back on this page.",
+            Home.HINT_TIME)
     end
     return false
 end
@@ -467,8 +491,9 @@ end
 ------------------------------------------------------------------ the rooms
 
 -- What a room's menu offers besides Upgrade (room id -> action).
-Home.ROOM_ACTIONS = { spanish = "menu_inventory", terry = "market" }
+Home.ROOM_ACTIONS = { spanish = "menu_inventory", terry = "market", myh = "story", russian = "heal", sydney = "skins", wild = "repair", american = "insurance" }
 Home.INVENTORY_NODE = "inventory" -- the main menu's inventory page
+Home.STORY_NODE = "story_missions" -- the game's Story Line page (crime.net's sidebar opens it so)
 
 local function room_data(room_id)
     local td = rawget(_G, "tweak_data")
@@ -595,6 +620,97 @@ function Home.ShowRoomMenu(room_id)
                     log(ok and "the market is open (Scarface)" or "the market could not be opened")
                 end
             end }
+    end
+    -- Dallas heals every body part for money (body_lasting.lua), shown when
+    -- a part is hurt.
+    local lasting = PDTI.BodyLasting
+    if Home.ROOM_ACTIONS[room_id] == "heal" and lasting and lasting.Enabled() and lasting.Hurt() then
+        lines[#lines + 1] = "\nHurt: " .. tostring(lasting.Summary())
+        buttons[#buttons + 1] = { text = "Heal everything (" .. PDTI.Ammo.Money(lasting.PRICE) .. ")",
+            callback_func = function()
+                local _, msg = lasting.HealAll()
+                PDTI.Hint(msg, Home.HINT_TIME)
+            end }
+    end
+    -- Rust repairs your worn weapons (armory_wear.lua).
+    local wear = PDTI.Wear
+    if Home.ROOM_ACTIONS[room_id] == "repair" and wear and wear.Enabled() then
+        local worn = wear.Worn()
+        if #worn == 0 then
+            lines[#lines + 1] = "\nYour weapons are in full condition."
+        else
+            local names = {}
+            for i, w in ipairs(worn) do
+                names[i] = string.format("%s %d%%", tostring(w.data.name or w.data.weapon_id), math.floor(w.cond))
+            end
+            local more = #worn - Home.REPAIR_BUTTONS
+            lines[#lines + 1] = "\nWorn: " .. table.concat(names, ", ", 1, math.min(#worn, Home.REPAIR_BUTTONS))
+                .. (more > 0 and (" and " .. more .. " more") or "")
+            local total = 0
+            for _, w in ipairs(worn) do total = total + w.price end
+            buttons[#buttons + 1] = { text = "Repair all (" .. PDTI.Ammo.Money(total) .. ")",
+                callback_func = function()
+                    local _, msg = wear.RepairAll()
+                    PDTI.Hint(msg, Home.HINT_TIME)
+                end }
+            for i = 1, math.min(#worn, Home.REPAIR_BUTTONS) do
+                local w = worn[i]
+                buttons[#buttons + 1] = { text = string.format("Repair the %s, %d%% (%s)",
+                    tostring(w.data.name or w.data.weapon_id), math.floor(w.cond), PDTI.Ammo.Money(w.price)),
+                    callback_func = function()
+                        local _, msg = wear.Repair(w.container, w.instance_id)
+                        PDTI.Hint(msg, Home.HINT_TIME)
+                    end }
+            end
+        end
+    end
+    -- Houston insures your weapons (armory_insurance.lua).
+    local ins = PDTI.Insurance
+    if Home.ROOM_ACTIONS[room_id] == "insurance" and ins and PDTI.Armory and PDTI.Armory.Enabled() then
+        local open, insured = ins.Weapons()
+        local function names(list)
+            local out = {}
+            for i = 1, math.min(#list, Home.REPAIR_BUTTONS) do out[i] = tostring(list[i].data.name or list[i].data.weapon_id) end
+            local more = #list - Home.REPAIR_BUTTONS
+            return table.concat(out, ", ") .. (more > 0 and (" and " .. more .. " more") or "")
+        end
+        lines[#lines + 1] = #insured > 0 and ("\nInsured: " .. names(insured) .. ".")
+            or "\nNone of your weapons is insured."
+        for _, l in ipairs(ins.ReturnLines()) do lines[#lines + 1] = l end
+        if #open > 0 then
+            lines[#lines + 1] = string.format("Not insured: %s. Lost, an insured weapon is back in your locker %s after the heist.",
+                names(open), ins.DelayText())
+            local total = 0
+            for _, e in ipairs(open) do total = total + e.price end
+            buttons[#buttons + 1] = { text = "Insure all (" .. PDTI.Ammo.Money(total) .. ")",
+                callback_func = function()
+                    local _, msg = ins.InsureAll()
+                    PDTI.Hint(msg, Home.HINT_TIME)
+                end }
+            for i = 1, math.min(#open, Home.REPAIR_BUTTONS) do
+                local e = open[i]
+                buttons[#buttons + 1] = { text = string.format("Insure the %s (%s)",
+                    tostring(e.data.name or e.data.weapon_id), PDTI.Ammo.Money(e.price)),
+                    callback_func = function()
+                        local _, msg = ins.Insure(e.container, e.instance_id)
+                        PDTI.Hint(msg, Home.HINT_TIME)
+                    end }
+            end
+        end
+    end
+    -- Sydney changes your weapons' skins (armory_skins.lua).
+    local skins = PDTI.WeaponSkins
+    if Home.ROOM_ACTIONS[room_id] == "skins" and skins and skins.Enabled() then
+        buttons[#buttons + 1] = { text = "Weapon skins",
+            callback_func = function()
+                local ok = PDTI.OpenSkins and PDTI.OpenSkins()
+                log(ok and "the skins are open (Sydney)" or "the skins could not be opened")
+            end }
+    end
+    -- Duke: the game's Story Line, first (offline: online it is the game's).
+    if Home.ROOM_ACTIONS[room_id] == "story" and single_player() then
+        table.insert(buttons, 1, { text = "Story Line (leaves the safehouse, comes back)",
+            callback_func = function() Home.ToStoryLine() end })
     end
     buttons[#buttons + 1] = { text = "Close", cancel_button = true }
     sm:show({ id = "pdti_room_menu", title = name, text = table.concat(lines, "\n"), button_list = buttons,
@@ -751,24 +867,37 @@ end
 
 ---------------------------------------------------------- the menu inventory
 
--- Leaves the safehouse for the main menu's inventory; the menu brings you
--- back (Home.OnMenuMain / MenuTick). The way the game's "end game" leaves.
-function Home.ToMenuInventory()
+-- Leaves the safehouse for a page of the main menu, marked (mem[mark]) for
+-- the menu to open it and bring you back (Home.OnMenuMain / MenuTick). The
+-- way the game's "end game" leaves.
+local function leave_for(mark, what)
     if not PDTI.InSafehouse() then return false end
     local mch = rawget(_G, "MenuCallbackHandler")
     local mem = memory()
     if not mem or type(mch) ~= "table" or type(mch._dialog_end_game_yes) ~= "function" then
-        log("cannot leave for the menu inventory: the game's functions are not there")
+        log("cannot leave for " .. what .. ": the game's functions are not there")
         return false
     end
-    mem.to_inventory = true
-    log("leaving for the menu inventory (back to the safehouse after it)")
+    mem[mark] = true
+    log("leaving for " .. what .. " (back to the safehouse after it)")
     local ok, err = pcall(mch._dialog_end_game_yes, mch)
     if not ok then
-        mem.to_inventory = nil
+        mem[mark] = nil
         log("could not leave the safehouse: " .. tostring(err))
     end
     return ok
+end
+
+-- Chains: the main menu's inventory.
+function Home.ToMenuInventory()
+    return leave_for("to_inventory", "the menu inventory")
+end
+
+-- Duke (0.43.0): the game's Story Line (offline only; with a crew it stays
+-- the game's).
+function Home.ToStoryLine()
+    if not single_player() then return false end
+    return leave_for("to_story", "the Story Line")
 end
 
 -- The laptop: leaves the safehouse for crime.net with the Contract Broker
@@ -920,6 +1049,8 @@ local function make_menu_enter(orig)
         -- The armory first (armory.lua): a heist left unfinished is lost.
         local armory = PDTI.Armory
         if armory and armory.OnMenu then pcall(armory.OnMenu) end
+        -- The body parts: a heist left counts as ended down (body_lasting.lua).
+        if PDTI.BodyLasting then pcall(PDTI.BodyLasting.OnMenu) end
         -- A new save of the mod's own: the start dialog (save_slot.lua). The
         -- way to the safehouse waits while it is open.
         local slot = PDTI.SaveSlot
@@ -943,6 +1074,8 @@ end
 
 local function make_menu_update(orig)
     return function(self, t, dt, ...)
+        -- Insured weapons coming back (armory_insurance.lua).
+        if PDTI.Insurance then pcall(PDTI.Insurance.Tick) end
         if Home.pending then
             local ok, err = pcall(Home.MenuTick, dt)
             if not ok then

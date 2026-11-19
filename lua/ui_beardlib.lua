@@ -316,7 +316,8 @@ end
 -- preview 50). Whatever fails leaves the item as it was.
 local PIC_LAYER, TEXT_LAYER = 3, 5
 local PIC_MARGIN = 2
-local BASE_PIC_H = 72 -- (the weapon view's and the market's picture, at scale 1)
+local BASE_PIC_H = 72 -- (the market's picture, at scale 1)
+local WEAPON_PIC_H = 120 -- (the weapon view's picture, in the middle of it, at scale 1)
 local BOX_PIC_ALPHA = 0.45 -- (PRI / SEC: behind the weapon's name)
 
 -- The path when its picture can be drawn now, else nil.
@@ -388,8 +389,8 @@ end
 
 -- A box of its own with the picture in it (the weapon view, the market):
 -- the next y (the same y when there is no picture).
-local function big_picture(win, name, path, x, y, w)
-    local h = math.floor(BASE_PIC_H * UI_SCALE + 0.5)
+local function big_picture(win, name, path, x, y, w, height)
+    local h = height or math.floor(BASE_PIC_H * UI_SCALE + 0.5)
     local s = path and fitted(path, win:Panel(), w, h)
     if not s then return y end
     local div = win:Divider({ name = name, label = DYN, text = "", position = { x, y }, w = w, size = h })
@@ -398,7 +399,48 @@ local function big_picture(win, name, path, x, y, w)
     return y + h + 4
 end
 
-local function draw_grid(win, container, origin_x, origin_y, model)
+-- An insured weapon (armory_insurance.lua): a small blue mark in the
+-- corner of its box (its top-right cell in a grid).
+local INS_COLOR, INS_MARK = { 0.3, 0.6, 1.0 }, 8
+local function insured(item)
+    local I = PDTI.Insurance
+    return I ~= nil and type(item) == "table" and item.item_id == "weapon" and type(item.data) == "table"
+        and I.Policy(item.data.uid) ~= nil
+end
+local function ins_mark(btn, w)
+    pcall(function()
+        btn:Panel():rect({ name = "pdti_ins_mark", x = w - INS_MARK - 3, y = 3, w = INS_MARK, h = INS_MARK,
+            color = rgb(INS_COLOR), layer = TEXT_LAYER + 1 })
+    end)
+end
+
+-- A worn weapon (armory_wear.lua): a thin bar along the bottom of its box
+-- (its top-left cell in a grid), as long as its condition: green, yellow
+-- below 50%, red below 25%. Not drawn at 100%.
+local WEAR_H = 3
+local function wear_cond(item)
+    local W = PDTI.Wear
+    if not W or type(item) ~= "table" or item.item_id ~= "weapon" or type(item.data) ~= "table" then return nil end
+    local cond = W.Cond(item.data)
+    if cond >= 100 then return nil end
+    return cond
+end
+local function wear_color(cond)
+    if cond < 25 then return { 0.9, 0.2, 0.2 } end
+    if cond < 50 then return { 0.95, 0.8, 0.2 } end
+    return { 0.3, 0.85, 0.35 }
+end
+local function wear_bar(btn, w, h, cond)
+    pcall(function()
+        btn:Panel():rect({ name = "pdti_wear_bar", x = 3, y = h - WEAR_H - 2,
+            w = math.max(1, math.floor((w - 6) * cond / 100 + 0.5)), h = WEAR_H,
+            color = rgb(wear_color(cond)), layer = TEXT_LAYER + 1 })
+    end)
+end
+
+-- first_row, rows: only these rows are drawn, the first at origin_y (the
+-- locker scrolls); all of them when not given.
+local function draw_grid(win, container, origin_x, origin_y, model, first_row, rows)
     local info = model.containers[container]
     local map = model.occupancy[container]
     if not info or not map then return end
@@ -430,7 +472,9 @@ local function draw_grid(win, container, origin_x, origin_y, model)
         return p
     end
 
-    for y = 0, map.height - 1 do
+    first_row = first_row or 0
+    local last_row = math.min(map.height, first_row + (rows or map.height)) - 1
+    for y = first_row, last_row do
         for x = 0, map.width - 1 do
             local id = map.cells[y + 1][x + 1]
             local item = id and items_by_id[id]
@@ -448,7 +492,7 @@ local function draw_grid(win, container, origin_x, origin_y, model)
                 name = string.format("cell_%s_%d_%d", container, x, y),
                 label = DYN,
                 text = text,
-                position = { origin_x + x * CELL_W, origin_y + y * CELL_H },
+                position = { origin_x + x * CELL_W, origin_y + (y - first_row) * CELL_H },
                 w = CELL_W - GAP, size = CELL_H - GAP,
                 font_size = fit_font(text, CELL_W - GAP, CELL_H - GAP, CELL_FONT),
                 -- (A pictured item's name in its corner.)
@@ -470,6 +514,14 @@ local function draw_grid(win, container, origin_x, origin_y, model)
             fit(btn, CELL_W - GAP, CELL_H - GAP)
             local piece = pic and pic.by[(x - item.x) .. "_" .. (y - item.y)]
             if piece then draw_piece(btn, pic.path, piece) end
+            if item and y == item.y and insured(item) then
+                local iw = PDTI.ItemSize(item, item.rotated == true and not hand, container) or 1
+                if x == item.x + iw - 1 then ins_mark(btn, CELL_W - GAP) end
+            end
+            if item and y == item.y and x == item.x then
+                local cond = wear_cond(item)
+                if cond then wear_bar(btn, CELL_W - GAP, CELL_H - GAP, cond) end
+            end
             view.cells[#view.cells + 1] = { item = btn, container = container, x = x, y = y }
         end
     end
@@ -1115,7 +1167,7 @@ local function draw_prices(win)
     local m = PDTI.Market
     local x, y, w = PAD, 6, INNER_W
     local rows = m.Catalog()
-    label(win, "market_prices_label", string.format("Prices  (%d loot types)", #rows), x, y, w)
+    label(win, "market_prices_label", string.format("Prices  (%d loot types, dearest first)", #rows), x, y, w)
     y = y + LABEL_H
     line(win, "market_prices_help", "Now: today's price. Real: the bag's base value.", x, y, w)
     y = y + LINE_H
@@ -1183,11 +1235,69 @@ local function weapon_row_text(r)
         f ~= "" and (", " .. f) or "", r.stock > 0 and (r.stock .. " for sale") or "none today")
 end
 
+-- The weapons by page (0.42.0): primary or secondary, then the weapon's
+-- type (Armory.TYPES), each its own list. A page or a type with no weapons
+-- gives way to the first that has some; the weapon picked is one of the
+-- list shown (the first, until you pick one).
+local WEAPON_PAGES = { { id = "primaries", text = "Primary" }, { id = "secondaries", text = "Secondary" } }
+local TYPE_COLS = 4 -- type buttons a row
+
+local function weapon_view(all)
+    local by = { primaries = {}, secondaries = {} }
+    for _, r in ipairs(all) do
+        local page = by[r.category]
+        if page then
+            page[r.wtype] = page[r.wtype] or {}
+            table.insert(page[r.wtype], r)
+        end
+    end
+    local page = view.weapon_page
+    if not (by[page] and next(by[page])) then page = next(by.primaries) and "primaries" or "secondaries" end
+    local types = {}
+    for _, ty in ipairs(PDTI.Armory.TYPES) do
+        if by[page][ty.id] then types[#types + 1] = ty end
+    end
+    local wtype = view.weapon_type
+    if not by[page][wtype] then wtype = types[1] and types[1].id end
+    local rows = wtype and by[page][wtype] or {}
+    local picked = false
+    for _, r in ipairs(rows) do
+        if r.weapon_id == view.weapon_pick then picked = true end
+    end
+    if not picked then view.weapon_pick = rows[1] and rows[1].weapon_id end
+    view.weapon_page, view.weapon_type = page, wtype
+    return by, page, types, wtype, rows
+end
+
 local function draw_weapon_prices(win)
     local A = PDTI.Armory
     local x, y, w = PAD, 6, INNER_W
-    local rows = A.Catalog()
-    label(win, "wmarket_prices_label", string.format("Weapons  (%d)", #rows), x, y, w)
+    local by, page, types, wtype, rows = weapon_view(A.Catalog())
+    -- The pages: primary, secondary (how many each).
+    local pw = math.floor((w - BTN_GAP) / 2)
+    for i, pg in ipairs(WEAPON_PAGES) do
+        local n = 0
+        for _, list in pairs(by[pg.id]) do n = n + #list end
+        small_button(win, "wmarket_page_" .. pg.id, string.format("%s (%d)", pg.text, n), x + (i - 1) * (pw + BTN_GAP), y,
+            after(function()
+                if view.weapon_page ~= pg.id then view.weapon_page, view.weapon_type = pg.id, nil end
+            end), pw, page == pg.id)
+    end
+    y = y + ROW_H + 2
+    -- Its types, a row of four at most.
+    local cols = math.max(1, math.min(TYPE_COLS, #types))
+    local tw = math.floor((w - (cols - 1) * BTN_GAP) / cols)
+    for i, ty in ipairs(types) do
+        local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+        small_button(win, "wmarket_type_" .. ty.id, ty.short, x + col * (tw + BTN_GAP), y + row * ROW_H,
+            after(function() view.weapon_type = ty.id end), tw, wtype == ty.id)
+    end
+    y = y + math.ceil(#types / cols) * ROW_H + 2
+    local name = "Weapons"
+    for _, ty in ipairs(types) do
+        if ty.id == wtype then name = ty.name end
+    end
+    label(win, "wmarket_prices_label", string.format("%s  (%d)", name, #rows), x, y, w)
     y = y + LABEL_H
     line(win, "wmarket_prices_help", "Today's price, the game's own, and how many are for sale.", x, y, w)
     y = y + LINE_H + 2
@@ -1197,7 +1307,6 @@ local function draw_weapon_prices(win)
         line(win, "wmarket_prices_none", "No weapons found.", x, y, w)
         return y + LINE_H + PAD
     end
-    if view.weapon_pick == nil then view.weapon_pick = rows[1].weapon_id end
     local texts = {}
     for i, r in ipairs(rows) do texts[i] = weapon_row_text(r) end
     local list_h = math.min(#rows, PRICE_ROWS) * ROW_H
@@ -1283,10 +1392,24 @@ local function draw_part_list(win, weapon_id, x, y, w)
     return y + BTN_H + 4
 end
 
+-- The insured weapons on their way back (armory_insurance.lua), a line each.
+local function draw_returns(win, prefix, x, y, w)
+    local I = PDTI.Insurance
+    if not I then return y end
+    for i, text in ipairs(I.ReturnLines()) do
+        line(win, prefix .. "_return_" .. i, text, x, y, w)
+        y = y + LINE_H
+    end
+    return y
+end
+
 local function draw_weapon_market(win, x, y, w)
     local A = PDTI.Armory
     label(win, "wmarket_label", "Weapons market  " .. tostring(A.Today()), x, y, w)
     y = y + LABEL_H
+    y = draw_returns(win, "wmarket", x, y, w)
+    -- (Drawn before the list on the left: the page and the pick are settled here too.)
+    weapon_view(A.Catalog())
     local id = view.weapon_pick
     if not id then
         line(win, "wmarket_none", "Pick a weapon on the left.", x, y, w)
@@ -1342,12 +1465,22 @@ local function inspect_status(msg)
     PDTI.UISetStatus(msg)
 end
 
--- The weapon's slots (0.38.2): a box for each, with the part in it (yours
--- in a part's colour, the weapon's own grey, an empty slot dark). Drag a
--- part onto its slot to fit it; drag yours out onto a cell, or Ctrl+click
--- it, to take it off (ui_interaction.lua: the slot drag).
+-- The weapon's slots (0.38.2), around the weapon's picture (0.41.0): the
+-- parts that go on top of it (the sights, the gadgets) above the picture,
+-- the ones that hang under it (the grip, the foregrip, the stock, the
+-- magazine) below it. A box for each, with the part in it (yours in a
+-- part's colour, the weapon's own grey, an empty slot dark). Drag a part
+-- onto its slot to fit it; drag yours out onto a cell, or Ctrl+click it, to
+-- take it off (ui_interaction.lua: the slot drag).
 local SLOT_COLS = 3
 local OWN_PART = { 0.30, 0.30, 0.32 }
+-- The slots that go on top of the weapon; every other slot is under it.
+local TOP_TYPES = { sight = true, gadget = true, bonus = true }
+-- The order of the slots on top of the weapon, and of the ones under it (the
+-- ones that hang under it first, then the gun's own parts).
+local TOP_ORDER = { "sight", "gadget", "bonus" }
+local BOTTOM_ORDER = { "grip", "foregrip", "vertical_grip", "stock", "magazine", "ammo",
+    "custom", "extra", "drag_handle", "barrel_ext", "barrel", "upper_reciever", "lower_reciever", "slide" }
 -- job: the change going on in a heist on this weapon (armory_hotmod.lua).
 local function slot_text(s, job)
     local P = PDTI.Parts
@@ -1366,7 +1499,132 @@ local function slot_text(s, job)
     return P.TypeName(s.ptype) .. "\n" .. short(what, 26)
 end
 
-local function draw_slots(win, at, d, x, y, w)
+-- The weapon's slots in two bands: the ones on top of the weapon and the
+-- ones under it, each in its own order.
+local function slot_bands(slots)
+    local top, bottom = {}, {}
+    for _, s in ipairs(slots) do
+        if TOP_TYPES[s.ptype] then top[#top + 1] = s else bottom[#bottom + 1] = s end
+    end
+    local function by_order(list, order)
+        local function rank(ptype)
+            for i, t in ipairs(order) do
+                if t == ptype then return i end
+            end
+            return #order + 1
+        end
+        table.sort(list, function(a, b)
+            local ra, rb = rank(a.ptype), rank(b.ptype)
+            if ra ~= rb then return ra < rb end
+            if a.ptype ~= b.ptype then return a.ptype < b.ptype end
+            return (a.part_id or "") < (b.part_id or "")
+        end)
+    end
+    by_order(top, TOP_ORDER)
+    by_order(bottom, BOTTOM_ORDER)
+    return top, bottom
+end
+
+-- A slot's box: the part in it, with its picture on the right (not on the
+-- weapon's own standard parts).
+local function draw_slot_box(win, at, d, s, index, x, y, bw, bh)
+    local slot = { container = at.container, instance_id = at.instance_id, ptype = s.ptype, part_id = s.part_id }
+    local base = s.removable and CATEGORY_COLORS.utility or (s.part_id and OWN_PART or SLOT_KIND_COLORS.general)
+    local out = PDTI.UIGetSlotDrag()
+    local job = PDTI.HotMod and PDTI.HotMod.Active()
+    if job and job.weapon_uid ~= d.uid then job = nil end
+    local lifted = out and s.part_id ~= nil and out.part_id == s.part_id
+    local text = slot_text(s, job)
+    local path = s.part_id and not s.standard and ready(PDTI.Pictures and PDTI.Pictures.PartPath(s.part_id))
+    local piece, pw = side_picture(win, path, bw, bh)
+    local btn = win:Button({
+        name = "inspect_slot_" .. index, label = DYN, text = text,
+        position = { x, y }, w = bw, size = bh,
+        font_size = fit_font(text, piece and (bw - pw - 4) or bw, bh, CELL_FONT),
+        text_align = piece and "left" or "center", text_vertical = "center",
+        background_color = rgb(base, lifted and 1.5 or 1), highlight_color = rgb(base, 1.3),
+        -- (A press is the drag's, _UIMousePressed; this is the click's
+        -- own way, when the press did not take it.)
+        on_callback = after(function()
+            if ctrl_down() then
+                PDTI.UISlotTakeOff(slot)
+                view.inspect_status = PDTI.UIGetStatus()
+            else
+                PDTI.UISetStatus("Drag it out of its slot onto a cell, or Ctrl+click it, to take it off")
+            end
+        end)
+    })
+    fit(btn, bw, bh)
+    if piece then draw_piece(btn, path, piece) end
+    view.slots[#view.slots + 1] = { item = btn, slot = slot }
+    return btn
+end
+
+-- A band of slots (the ones on top of the weapon, or the ones under it): a
+-- row of boxes, three to a row. The next y and the number of the next box.
+local function draw_slot_band(win, at, d, slots, x, y, w, first)
+    if #slots == 0 then return y, first end
+    local bw = math.floor((w - (SLOT_COLS - 1) * BTN_GAP) / SLOT_COLS)
+    local bh = 2 * LINE_H + 4
+    for i, s in ipairs(slots) do
+        local col, row = (i - 1) % SLOT_COLS, math.floor((i - 1) / SLOT_COLS)
+        draw_slot_box(win, at, d, s, first + i - 1, x + col * (bw + BTN_GAP),
+            y + row * (bh + BTN_GAP), bw, bh)
+    end
+    return y + math.ceil(#slots / SLOT_COLS) * (bh + BTN_GAP) + 2, first + #slots
+end
+
+-- The build templates (0.41.0): the builds you saved. Save the build of the
+-- weapon you are looking at, and put one on any weapon later. The parts are
+-- still yours: a template is a recipe, not a copy of the parts.
+local TEMPLATE_ROWS = 8
+local function draw_templates(win, at, d, x, y, w)
+    local T = PDTI.Templates
+    if not T then return y end
+    label(win, "templates_label", "Build templates", x, y, w)
+    y = y + LABEL_H
+    local list = T.All()
+    if #list == 0 then
+        line(win, "templates_none", "No templates yet: save this build to put it on another weapon.", x, y, w)
+        y = y + LINE_H + 2
+    else
+        local apply_w, del_w = 56, 40
+        local name_w = w - apply_w - del_w - 2 * BTN_GAP
+        for i, t in ipairs(list) do
+            if i > TEMPLATE_ROWS then break end
+            -- (Its own id: the loop's variable is not the one to keep.)
+            local tid = t.id
+            local text = string.format("%s  (%d part(s))", tostring(t.name or "build"), #(t.parts or {}))
+            line(win, "template_line_" .. tostring(tid), short(text, 44), x, y + 2, name_w)
+            small_button(win, "template_apply_" .. tostring(tid), "Apply", x + name_w + BTN_GAP, y,
+                after(function()
+                    local ok, msg = T.Apply(tid, at.container, at.instance_id)
+                    inspect_status(msg)
+                end), apply_w)
+            small_button(win, "template_delete_" .. tostring(tid), "Del", x + name_w + BTN_GAP + apply_w + BTN_GAP, y,
+                after(function()
+                    local ok, msg = T.Delete(tid)
+                    inspect_status(msg)
+                end), del_w)
+            y = y + ROW_H
+        end
+        if #list > TEMPLATE_ROWS then
+            line(win, "templates_more", string.format("and %d more template(s)", #list - TEMPLATE_ROWS), x, y + 2, w)
+            y = y + LINE_H
+        end
+        y = y + 2
+    end
+    button(win, "template_save", "Save this build as a template", x, y, after(function()
+        local ok, t, msg = T.Save(d)
+        inspect_status(msg)
+    end), w)
+    y = y + BTN_H + 4
+    return y
+end
+
+-- The weapon's view (0.41.0): its picture in the middle, its slots around
+-- it (the ones on top of it above the picture, the ones under it below).
+local function draw_weapon_view(win, at, item, d, x, y, w)
     local P = PDTI.Parts
     local slots = P.Slots(d)
     local yours = 0
@@ -1375,43 +1633,21 @@ local function draw_slots(win, at, d, x, y, w)
     end
     label(win, "inspect_parts_label", string.format("Slots  (%d; %d part(s) of yours)", #slots, yours), x, y, w)
     y = y + LABEL_H
-    local bw = math.floor((w - (SLOT_COLS - 1) * BTN_GAP) / SLOT_COLS)
-    local bh = 2 * LINE_H + 4
-    local out = PDTI.UIGetSlotDrag()
-    local job = PDTI.HotMod and PDTI.HotMod.Active()
-    if job and job.weapon_uid ~= d.uid then job = nil end
-    for i, s in ipairs(slots) do
-        local slot = { container = at.container, instance_id = at.instance_id, ptype = s.ptype, part_id = s.part_id }
-        local base = s.removable and CATEGORY_COLORS.utility or (s.part_id and OWN_PART or SLOT_KIND_COLORS.general)
-        local lifted = out and s.part_id ~= nil and out.part_id == s.part_id
-        local text = slot_text(s, job)
-        local col, row = (i - 1) % SLOT_COLS, math.floor((i - 1) / SLOT_COLS)
-        -- A part's picture on the right of its box (not on the weapon's own
-        -- standard parts).
-        local path = s.part_id and not s.standard and ready(PDTI.Pictures and PDTI.Pictures.PartPath(s.part_id))
-        local piece, pw = side_picture(win, path, bw, bh)
-        local btn = win:Button({
-            name = "inspect_slot_" .. i, label = DYN, text = text,
-            position = { x + col * (bw + BTN_GAP), y + row * (bh + BTN_GAP) }, w = bw, size = bh,
-            font_size = fit_font(text, piece and (bw - pw - 4) or bw, bh, CELL_FONT),
-            text_align = piece and "left" or "center", text_vertical = "center",
-            background_color = rgb(base, lifted and 1.5 or 1), highlight_color = rgb(base, 1.3),
-            -- (A press is the drag's, _UIMousePressed; this is the click's
-            -- own way, when the press did not take it.)
-            on_callback = after(function()
-                if ctrl_down() then
-                    PDTI.UISlotTakeOff(slot)
-                    view.inspect_status = PDTI.UIGetStatus()
-                else
-                    PDTI.UISetStatus("Drag it out of its slot onto a cell, or Ctrl+click it, to take it off")
-                end
-            end)
-        })
-        fit(btn, bw, bh)
-        if piece then draw_piece(btn, path, piece) end
-        view.slots[#view.slots + 1] = { item = btn, slot = slot }
+    local top, bottom = slot_bands(slots)
+    local index = 1
+    if #top > 0 then
+        line(win, "inspect_slots_top", "On top of the weapon", x, y, w)
+        y = y + LINE_H + 2
+        y, index = draw_slot_band(win, at, d, top, x, y, w, index)
     end
-    y = y + math.ceil(#slots / SLOT_COLS) * (bh + BTN_GAP) + 2
+    -- The weapon's picture, in the middle of the view.
+    y = big_picture(win, "inspect_picture", item_picture(item), x, y, w,
+        math.floor(WEAPON_PIC_H * UI_SCALE + 0.5))
+    if #bottom > 0 then
+        line(win, "inspect_slots_bottom", "Under the weapon", x, y, w)
+        y = y + LINE_H + 2
+        y, index = draw_slot_band(win, at, d, bottom, x, y, w, index)
+    end
     line(win, "inspect_slots_help", "Drag a part onto its slot to fit it. Drag yours out onto a cell, or Ctrl+click it, to take it off.",
         x, y, w, 2 * LINE_H)
     y = y + 2 * LINE_H + 2
@@ -1421,6 +1657,39 @@ local function draw_slots(win, at, d, x, y, w)
         y = y + 2 * LINE_H + 2
     end
     return y
+end
+
+-- The weapon view's insurance (0.45.0, at home): insure it, or what it is
+-- insured for and the Cancel button. What the last change at home did to it.
+local function draw_insurance(win, at, d, x, y, w)
+    local I = PDTI.Insurance
+    local money = PDTI.Ammo.Money
+    if d.free then
+        line(win, "inspect_insure_free", "A free weapon needs no insurance: it is given again.", x, y, w)
+        return y + LINE_H + 4
+    end
+    local p = I.Policy(d.uid)
+    if p then
+        line(win, "inspect_insured", string.format("Insured: lost, it is back in your locker %s after the heist.",
+            I.DelayText()), x, y, w)
+        y = y + LINE_H
+        button(win, "inspect_uninsure", "Cancel insurance (" .. money(p.paid) .. " back)", x, y, after(function()
+            local _, msg = I.CancelItem(at.container, at.instance_id)
+            inspect_status(msg)
+        end), w)
+        return y + BTN_H + 4
+    end
+    local note = I.Note(d.uid)
+    if note then
+        line(win, "inspect_insure_note", note, x, y, w, 2 * LINE_H)
+        y = y + 2 * LINE_H
+    end
+    button(win, "inspect_insure", string.format("Insure for %s (back %s after a loss)", money(I.Price(d)),
+        I.DelayText()), x, y, after(function()
+        local _, msg = I.Insure(at.container, at.instance_id)
+        inspect_status(msg)
+    end), w)
+    return y + BTN_H + 4
 end
 
 local function draw_inspect(win, x, y, w)
@@ -1433,7 +1702,6 @@ local function draw_inspect(win, x, y, w)
     local name = weapon and tostring(d.name or d.weapon_id) or P.Name(d.part_id)
     label(win, "inspect_label", "Inspect: " .. name, x, y, w)
     y = y + LABEL_H
-    y = big_picture(win, "inspect_picture", item_picture(item), x, y, w)
     if weapon then
         local mag
         if PDTI.HAND_SLOTS[at.container] then mag = "its magazine is in its slot's box"
@@ -1444,8 +1712,25 @@ local function draw_inspect(win, x, y, w)
         line(win, "inspect_weight", string.format("%.1f kg%s, %s.", PDTI.ItemWeight(item),
             conceal and (", concealment " .. conceal) or "", mag), x, y, w)
         y = y + LINE_H + 2
-        y = draw_slots(win, at, d, x, y, w)
+        -- Its condition (armory_wear.lua).
+        local W = PDTI.Wear
+        if W and not d.free then
+            local cond = W.Cond(d)
+            line(win, "inspect_condition", string.format("Condition %d%%: %s.", math.floor(cond), W.JamText(cond)),
+                x, y, w)
+            y = y + LINE_H + 2
+        end
+        -- Its skin (armory_skins.lua): Sydney changes it.
+        local S = PDTI.WeaponSkins
+        if S and type(d.skin_id) == "string" then
+            line(win, "inspect_skin", "Skin: " .. S.Label(S.Of(d)) .. " (Sydney changes it).", x, y, w)
+            y = y + LINE_H + 2
+        end
+        y = draw_weapon_view(win, at, item, d, x, y, w)
+        -- (A build is changed at home: no templates in a heist.)
+        if not PDTI.InHeist() then y = draw_templates(win, at, d, x, y, w) end
     else
+        y = big_picture(win, "inspect_picture", item_picture(item), x, y, w)
         local _, _, kg = P.Size(d.ptype)
         line(win, "inspect_part_type", string.format("%s, %.1f kg.", P.Tag(d.ptype), tonumber(d.weight) or kg), x, y, w)
         y = y + LINE_H
@@ -1475,6 +1760,17 @@ local function draw_inspect(win, x, y, w)
             inspect_status(msg)
         end), w)
         y = y + BTN_H + 4
+        -- Repair (armory_wear.lua).
+        local W = PDTI.Wear
+        if weapon and W and not d.free and W.RepairPrice(d) > 0 then
+            button(win, "inspect_repair", string.format("Repair for %s (to 100%%)", PDTI.Ammo.Money(W.RepairPrice(d))),
+                x, y, after(function()
+                    local _, msg = W.Repair(at.container, at.instance_id)
+                    inspect_status(msg)
+                end), w)
+            y = y + BTN_H + 4
+        end
+        if weapon and PDTI.Insurance then y = draw_insurance(win, at, d, x, y, w) end
     end
     if view.inspect_status then
         line(win, "inspect_status", tostring(view.inspect_status), x, y, w, 2 * LINE_H)
@@ -1486,6 +1782,21 @@ local function draw_inspect(win, x, y, w)
     return y + BTN_H + 8
 end
 
+-- The locker shows LOCKER_VIEW rows at once (0.51.0); the arrows and the
+-- mouse wheel move it LOCKER_STEP rows.
+local LOCKER_VIEW, LOCKER_STEP = 8, 2
+
+-- Scrolls the locker by delta rows (kept in its bounds). Returns the first
+-- row shown (from 0), the rows shown and the locker's rows.
+function PDTI.UILockerScroll(delta)
+    local total = PDTI.LOCKER.h
+    local rows = math.min(LOCKER_VIEW, total)
+    local top = math.floor((tonumber(view.locker_top) or 0) + (tonumber(delta) or 0))
+    top = math.max(0, math.min(total - rows, top))
+    view.locker_top = top
+    return top, rows, total
+end
+
 -- The weapons you keep (the inventory's Locker tab, 0.37.0). Every weapon
 -- is a grid item: drag it onto PRI or SEC (the left window) to take it into
 -- the heist, or into the backpack or rig as a spare; Ctrl+click sends it to
@@ -1494,17 +1805,160 @@ local function draw_locker(win, x, y, w, model)
     local A = PDTI.Armory
     label(win, "locker_grid_label", string.format("Locker  (%d weapon(s))", #A.Weapons()), x, y, w)
     y = y + LABEL_H
+    y = draw_returns(win, "locker", x, y, w)
     line(win, "locker_help", "Drag a weapon onto PRI or SEC to use it; right-click it to see its slots. A failed heist loses what you bring.",
         x, y, w, 2 * LINE_H)
     y = y + 2 * LINE_H + 2
-    draw_grid(win, "locker", x, y, model)
-    return y + PDTI.LOCKER.h * CELL_H + 4
+    -- (0.51.0: the locker scrolls; the wheel over it or the arrows.)
+    local top, rows, total = PDTI.UILockerScroll(0)
+    local bw = math.floor(BTN_W / 2)
+    small_button(win, "locker_up", "Up", x, y, safe(function() PDTI.UILockerScroll(-LOCKER_STEP); redraw() end), bw)
+    small_button(win, "locker_down", "Down", x + bw + BTN_GAP, y,
+        safe(function() PDTI.UILockerScroll(LOCKER_STEP); redraw() end), bw)
+    line(win, "locker_rows", string.format("Rows %d-%d of %d (the mouse wheel scrolls)", top + 1, top + rows, total),
+        x + 2 * (bw + BTN_GAP), y + 2, w - 2 * (bw + BTN_GAP))
+    y = y + ROW_H + 2
+    draw_grid(win, "locker", x, y, model, top, rows)
+    return y + rows * CELL_H + 4
 end
 
 -- The middle window in the menu has tabs: what you bring, the captured loot,
 -- the safehouse stash and your weapons.
+local draw_health -- (below: the health window, and the menu's Health tab)
+
+-- Sydney's skins screen (0.49.0, armory_skins.lua): your weapons, then the
+-- skins the one you pick takes. Pages of SKIN_ROWS.
+local SKIN_ROWS = 9
+local SKIN_PLACES = { hand_primary = "PRI", hand_secondary = "SEC", locker = "locker", backpack = "backpack",
+    rig = "rig", rig_2 = "rig", rig_3 = "rig" }
+
+local function skin_pager(win, key, page, pages, x, y, w)
+    if pages <= 1 then return y end
+    local bw = math.floor((w - 2 * BTN_GAP) / 3)
+    if page > 1 then
+        small_button(win, key .. "_prev", "< Prev", x, y, after(function() view[key] = page - 1 end), bw)
+    end
+    line(win, key .. "_at", string.format("Page %d of %d", page, pages), x + bw + BTN_GAP, y + 2, bw)
+    if page < pages then
+        small_button(win, key .. "_next", "Next >", x + 2 * (bw + BTN_GAP), y, after(function() view[key] = page + 1 end), bw)
+    end
+    return y + ROW_H + 2
+end
+
+local function page_of(key, n)
+    local pages = math.max(1, math.ceil(n / SKIN_ROWS))
+    local page = math.max(1, math.min(pages, tonumber(view[key]) or 1))
+    view[key] = page
+    return page, pages, (page - 1) * SKIN_ROWS
+end
+
+local function draw_skins(win, x, y, w)
+    local S, A = PDTI.WeaponSkins, PDTI.Armory
+    label(win, "skins_label", "Sydney: weapon skins", x, y, w)
+    y = y + LABEL_H
+    local pick = view.skin_pick
+    local item = pick and PDTI.FindItem(pick.container, pick.instance_id)
+    if item and item.item_id ~= A.ITEM_ID then item = nil end
+    if not item then
+        view.skin_pick = nil
+        local list = A.Weapons()
+        table.sort(list, function(a, b)
+            local ha, hb = PDTI.HAND_SLOTS[a.container] ~= nil, PDTI.HAND_SLOTS[b.container] ~= nil
+            if ha ~= hb then return ha end
+            local na, nb = tostring(a.data.name or a.data.weapon_id), tostring(b.data.name or b.data.weapon_id)
+            if na ~= nb then return na < nb end
+            return (tonumber(a.data.uid) or 0) < (tonumber(b.data.uid) or 0)
+        end)
+        line(win, "skins_help", "Pick a weapon:", x, y, w)
+        y = y + LINE_H + 2
+        if #list == 0 then
+            line(win, "skins_none", "You own no weapons.", x, y, w)
+            y = y + LINE_H
+        end
+        local page, pages, first = page_of("skins_wpage", #list)
+        for i = first + 1, math.min(#list, first + SKIN_ROWS) do
+            local e = list[i]
+            local text = string.format("%s (%s): %s", tostring(e.data.name or e.data.weapon_id),
+                SKIN_PLACES[e.container] or e.container, S.Label(S.Of(e.data)))
+            button(win, "skins_weapon_" .. (i - first), text, x, y, after(function()
+                view.skin_pick = { container = e.container, instance_id = e.instance_id }
+                view.skins_spage, view.skins_status = 1, nil
+            end), w)
+            y = y + BTN_H + 2
+        end
+        y = skin_pager(win, "skins_wpage", page, pages, x, y, w)
+    else
+        local d = item.data
+        local name = tostring(d.name or d.weapon_id)
+        line(win, "skins_weapon", name .. ": " .. S.Label(S.Of(d)), x, y, w)
+        y = y + LINE_H + 2
+        if type(d.skin_id) == "string" then
+            button(win, "skins_remove", "Remove the skin", x, y, after(function()
+                local _, msg = S.Remove(pick.container, pick.instance_id)
+                view.skins_status = msg
+            end), w)
+            y = y + BTN_H + 2
+        end
+        local owned = S.Owned(d.weapon_id)
+        if #owned == 0 then
+            line(win, "skins_none", "You own no skins for the " .. name .. ".", x, y, w)
+            y = y + LINE_H
+        end
+        local page, pages, first = page_of("skins_spage", #owned)
+        for i = first + 1, math.min(#owned, first + SKIN_ROWS) do
+            local e = owned[i]
+            local worn = d.skin_id == e.id
+            button(win, "skins_skin_" .. (i - first), S.Label(e) .. (worn and "  - on it" or ""), x, y, after(function()
+                local _, msg = S.Apply(pick.container, pick.instance_id, e.id)
+                view.skins_status = msg
+            end), w)
+            y = y + BTN_H + 2
+        end
+        y = skin_pager(win, "skins_spage", page, pages, x, y, w)
+        line(win, "skins_legendary", "A legendary skin brings its own parts (free); yours come off.", x, y, w)
+        y = y + LINE_H
+        button(win, "skins_back", "Back to your weapons", x, y, after(function()
+            view.skin_pick, view.skins_status = nil, nil
+        end), w)
+        y = y + BTN_H + 2
+    end
+    if view.skins_status then
+        line(win, "skins_status", tostring(view.skins_status), x, y, w, 2 * LINE_H)
+        y = y + 2 * LINE_H
+    end
+    button(win, "skins_close", "Close (Esc)", x, y + 2, after(function() PDTI.SetUIOpen(false) end), w)
+    return y + BTN_H + 10
+end
+
+-- The menu's Health tab (0.48.0, body_lasting.lua): the parts the last heist
+-- left you with, and Heal everything for $15,000.
+local function draw_health_tab(win, x, y, w)
+    local L = PDTI.BodyLasting
+    local h = draw_health(win, x, y)
+    y = y + h
+    if L.Hurt() then
+        button(win, "health_heal", "Heal everything (" .. PDTI.Ammo.Money(L.PRICE) .. ")", x, y, after(function()
+            local _, msg = L.HealAll()
+            view.heal_status = msg
+        end), w)
+        y = y + BTN_H + 4
+    else
+        line(win, "health_fine", "You are not hurt.", x, y, w)
+        y = y + LINE_H
+    end
+    line(win, "health_lasting", "Damage stays after a heist. Dallas (safehouse) heals too.", x, y, w)
+    y = y + LINE_H
+    if view.heal_status then
+        line(win, "health_status", tostring(view.heal_status), x, y, w)
+        y = y + LINE_H
+    end
+    return y + 8
+end
+
 local function draw_shop(win, x, y, w, model)
     local stash = PDTI.Stash
+    -- Opened through Sydney (safehouse.lua): the skins alone.
+    if view.skins_mode and PDTI.WeaponSkins then return draw_skins(win, x, y, w) end
     -- Opened through Scarface (safehouse.lua): the market alone.
     if view.market_mode then
         if not stash or not stash.Enabled() or not PDTI.Market then return y end
@@ -1548,6 +2002,9 @@ local function draw_shop(win, x, y, w, model)
     if PDTI.Armory and PDTI.Armory.Enabled() then
         tabs[#tabs + 1] = { id = "locker", text = "Locker (" .. #PDTI.Armory.Weapons() .. ")" }
     end
+    local lasting = PDTI.BodyLasting
+    local health_tab = lasting ~= nil and lasting.Enabled()
+    if health_tab then tabs[#tabs + 1] = { id = "health", text = lasting.Hurt() and "Health (hurt)" or "Health" } end
     local tw = math.floor((w - (#tabs - 1) * BTN_GAP) / #tabs)
     for i, tab in ipairs(tabs) do
         small_button(win, "shop_tab_" .. tab.id, tab.text, x + (i - 1) * (tw + BTN_GAP), y,
@@ -1557,6 +2014,7 @@ local function draw_shop(win, x, y, w, model)
     if view.shop_tab == "captured" then return draw_captured(win, stash, x, y, w) end
     if view.shop_tab == "stash" then return draw_stash(win, stash, x, y, w) end
     if view.shop_tab == "locker" and PDTI.Armory and model then return draw_locker(win, x, y, w, model) end
+    if view.shop_tab == "health" and health_tab then return draw_health_tab(win, x, y, w) end
     return draw_bring(win, x, y, w)
 end
 PDTI._UIDrawShop = draw_shop
@@ -1614,6 +2072,9 @@ local function draw_weapon_slot(win, entry, x, y, w, model)
         if not bare then piece.alpha = BOX_PIC_ALPHA end
         draw_piece(btn, path, piece)
     end
+    if insured(item) then ins_mark(btn, w) end
+    local cond = wear_cond(item)
+    if cond then wear_bar(btn, w, CELL_H - GAP, cond) end
     if info then view.cells[#view.cells + 1] = { item = btn, container = hand, x = 0, y = 0 } end
 end
 
@@ -1971,11 +2432,14 @@ local function health_shown()
     return body ~= nil and body.Enabled and body.Enabled() and PDTI.InHeist() and not view.inspect
 end
 
-local function draw_health(win)
+-- (x0, y0: where in the window; the health window's corner by default.
+-- Returns the height drawn.)
+draw_health = function(win, x0, y0)
     local body = PDTI.Body
     -- The real max health (skills and perks) even before the first hit.
     if body.AttachPlayer then pcall(body.AttachPlayer) end
-    local x, y = PAD, 6
+    local x, y = x0 or PAD, y0 or 6
+    local top = y0 or 0
     -- The total as the game shows it, rounded once (not the sum of the
     -- rounded parts).
     local now, max = 0, 0
@@ -2021,7 +2485,7 @@ local function draw_health(win)
     line(win, "health_hint_medic", "Medic bag: heals every part, black too", x, y, HEALTH_W - 2 * PAD)
     y = y + LINE_H
     body.ui_revision = body.state and body.state.revision
-    return y + PAD
+    return y + PAD - top
 end
 
 -- Made the first time it is needed (there is no health window in the menu).
@@ -2137,7 +2601,11 @@ function redraw()
             shop:SetSize(1, 1)
         end
     end
-    if view.market_mode then
+    if view.skins_mode then
+        -- Sydney's skins alone: the side windows empty.
+        left:SetSize(1, 1)
+        right:SetSize(1, 1)
+    elseif view.market_mode then
         -- The market alone: the prices on the left, the right window empty.
         pcall(function() left:ClearItems(GRAPH) end)
         local weapons = view.market_tab == "weapons" and PDTI.Armory ~= nil
@@ -2253,6 +2721,16 @@ local function is_left(button)
 end
 
 -- The right mouse button (the game's "1").
+-- The mouse wheel: -1 up, 1 down, nil for any other button.
+local function wheel_dir(button)
+    local ok, up, down = pcall(function()
+        local ids = rawget(_G, "Idstring")
+        return ids("mouse wheel up"), ids("mouse wheel down")
+    end)
+    if ok and button == up then return -1 end
+    if ok and button == down then return 1 end
+end
+
 local function is_right(button)
     local ids = rawget(_G, "Idstring")
     if not ids or button == nil then return false end
@@ -2267,11 +2745,40 @@ local function clear_preview()
     view.preview = {}
 end
 
+-- A part dragged (0.44.0): every weapon that takes it is marked green, a
+-- lighter green under the cells it would take.
+local FIT_MARK_ALPHA = 0.3
+local function show_fit_marks()
+    local marks = PDTI.UIFitWeapons and PDTI.UIFitWeapons()
+    if not marks then return 0 end
+    local maps, n = {}, 0
+    for _, cell in ipairs(view.cells) do
+        local wanted = marks[cell.container]
+        if wanted then
+            if maps[cell.container] == nil then maps[cell.container] = PDTI.GetOccupancyMap(cell.container) or false end
+            local map = maps[cell.container]
+            local row = map and map.cells[cell.y + 1]
+            local id = row and row[cell.x + 1]
+            if id and wanted[id] then
+                pcall(function()
+                    local panel = cell.item:Panel()
+                    local rect = panel:rect({ name = "pdti_fit_mark", w = panel:w(), h = panel:h(),
+                        color = Color(0.25, 0.85, 0.35), alpha = FIT_MARK_ALPHA, layer = 49 })
+                    view.preview[#view.preview + 1] = { panel = panel, rect = rect }
+                    n = n + 1
+                end)
+            end
+        end
+    end
+    return n
+end
+
 -- Tints the cells the dragged item would take: green when it fits there,
 -- red when it does not.
 local function show_preview(hit)
     clear_preview()
     view.last_preview = nil
+    pcall(show_fit_marks)
     if type(hit) ~= "table" then return end
     local slot = hit.mod_slot
     local p
@@ -2305,6 +2812,17 @@ PDTI._UIShowPreview = show_preview
 
 function PDTI._UIMousePressed(button, x, y)
     if not view.open then return nil end
+    -- The mouse wheel over the locker scrolls it (also while dragging).
+    local wheel = wheel_dir(button)
+    if wheel then
+        local hit = PDTI._UIHit(x, y)
+        if type(hit) ~= "table" or hit.container ~= "locker" then return nil end
+        PDTI.UILockerScroll(wheel * LOCKER_STEP)
+        redraw()
+        -- (A weapon being dragged: its preview under the mouse again.)
+        if PDTI.UIIsDragging() then show_preview(PDTI._UIHit(x, y)) end
+        return false
+    end
     -- The right button on a weapon (or a part): the weapon view (Inspect).
     if is_right(button) then
         if PDTI.UIIsDragging() then return nil end
@@ -2669,6 +3187,8 @@ function PDTI.SetUIOpen(open)
     else
         view.open = false
         view.market_mode = false
+        view.skins_mode, view.skin_pick, view.skins_status = false, nil, nil
+        view.skins_wpage, view.skins_spage = nil, nil
         view.market_pick = nil
         if view.parts_list and view.shop then pcall(function() view.shop:ClearItems(PARTS) end) end
         view.parts_list, view.parts_sig, view.part_pick = nil, nil, nil
@@ -2728,6 +3248,17 @@ function PDTI.OpenMarket()
     return ok
 end
 function PDTI.IsMarketOpen() return view.open and view.market_mode == true end
+
+-- Sydney's weapon skins (safehouse.lua): the screen opens with them alone.
+function PDTI.OpenSkins()
+    local S = PDTI.WeaponSkins
+    if not (S and S.Enabled()) then return false end
+    if view.open then PDTI.SetUIOpen(false) end
+    view.skins_mode = true
+    local ok = PDTI.SetUIOpen(true) == true and view.open
+    if not ok then view.skins_mode = false end
+    return ok
+end
 
 function PDTI.ToggleUI()
     return PDTI.SetUIOpen(not view.open)

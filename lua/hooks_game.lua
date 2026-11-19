@@ -171,6 +171,13 @@ local wrapper = function(self, t, dt, paused)
         end
         -- The way home after a job, and the safehouse's spots.
         if PDTI.Safehouse then pcall(PDTI.Safehouse.GameTick, dt) end
+        -- Insured weapons coming back (in the safehouse; armory_insurance.lua).
+        if PDTI.Insurance then pcall(PDTI.Insurance.Tick) end
+        -- A jam being cleared (armory_wear.lua).
+        if PDTI.Wear then
+            pcall(PDTI.Wear.InstallHooks)
+            pcall(PDTI.Wear.Tick)
+        end
         -- Extra Heist Info: this mod's buffs in its buff bar.
         if PDTI.EHIBuffs then pcall(PDTI.EHIBuffs.Poll) end
     end

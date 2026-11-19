@@ -276,12 +276,13 @@ function Parts.Reachable(c)
     return true
 end
 
--- The build after a change, and the parts that come off it as items (a
--- standard part of the weapon, or one that is no item, just goes).
-local function change(weapon_data, part_id, remove)
+-- The build after a change (on the build given), and the parts that come off
+-- it as items (a standard part of the weapon, or one that is no item, just
+-- goes). The game's own changer only edits the list given.
+local function change_bp(weapon_data, bp, part_id, remove)
     local fid, f = weapon_data.factory_id, factory()
     if not f or type(fid) ~= "string" then return nil end
-    local old = Armory.SplitBlueprint(weapon_data.blueprint)
+    local old = copy(bp or {})
     local new = copy(old)
     local ok = pcall(function() f:change_part_blueprint_only(fid, part_id, new, remove or nil) end)
     if not ok then return nil end
@@ -291,6 +292,11 @@ local function change(weapon_data, part_id, remove)
         if not keep[p] and not default[p] and Parts.Buyable(p) then off[#off + 1] = p end
     end
     return new, off
+end
+
+-- The build after a change, and the parts that come off it as items.
+local function change(weapon_data, part_id, remove)
+    return change_bp(weapon_data, Armory.SplitBlueprint(weapon_data.blueprint), part_id, remove)
 end
 
 local function weapon_name(d)
@@ -310,6 +316,9 @@ function Parts.CanFit(part_data, weapon_data)
     local part_id = part_data.part_id
     local can, why = changeable(part_id)
     if not can then return false, why end
+    -- A locked skin (armory_skins.lua).
+    local lock = PDTI.WeaponSkins and PDTI.WeaponSkins.LockReason(weapon_data)
+    if lock then return false, lock end
     if not Parts.Takes(weapon_data.weapon_id, part_id) then
         return false, string.format("the %s does not fit the %s", Parts.Name(part_id), weapon_name(weapon_data))
     end
@@ -350,6 +359,7 @@ local function place_off(off, near, weapon_id)
     end
     return true
 end
+Parts.PlaceOff = place_off
 
 -- The weapon's new build: its weight follows, and so does its loaded
 -- magazine (a magazine part). In your hands: the game's slot, and in the
@@ -357,6 +367,9 @@ end
 local function set_build(c, iid, d, bp)
     PDTI.EditItems({ update = { { container = c, instance_id = iid, data = {
         blueprint = Armory.JoinBlueprint(bp), weight = Armory.Weight(d.weapon_id, d.factory_id, bp) } } } })
+    -- Insured for the old build: at home that insurance ends, paid back
+    -- (armory_insurance.lua).
+    if PDTI.Insurance then pcall(PDTI.Insurance.OnBuildChanged, d, bp) end
     if PDTI.Plan and PDTI.Plan.ReshapeStored then pcall(PDTI.Plan.ReshapeStored, d.uid) end
     if PDTI.HAND_SLOTS[c] then
         pcall(Armory.SyncEquipped)
@@ -395,6 +408,103 @@ function Parts.Fit(part_c, part_iid, weapon_c, weapon_iid)
     local text = string.format("The %s is on the %s", Parts.Name(part.data.part_id), weapon_name(weapon.data))
     if #off > 0 then text = text .. "; off: " .. names(off) end
     return true, text
+end
+
+-- The part you own as an item (the first one), by its part id: its
+-- container and the item, or nil.
+function Parts.OwnedItem(part_id)
+    if type(part_id) ~= "string" then return nil end
+    local e = PDTI.FindItems(function(_, it)
+        return it.item_id == Parts.ITEM_ID and type(it.data) == "table" and it.data.part_id == part_id
+    end)[1]
+    if not e then return nil end
+    return e.container, e.item
+end
+
+-- Puts the parts back where they were (when a build could not be made): in
+-- their own cell, or anywhere in their container.
+local function put_back(items)
+    for _, e in ipairs(items) do
+        local ok = PDTI.AddItem(e.container, Parts.ITEM_ID, e.item.x, e.item.y,
+            e.item.rotated == true, 1, e.item.data)
+        if not ok then PDTI.AddItemAuto(e.container, Parts.ITEM_ID, 1, e.item.data, true) end
+    end
+end
+
+-- Puts a whole build on the weapon (a build template): the parts the
+-- weapon takes and you own as items go on it, the ones that come off become
+-- items again. Nothing happens when nothing can be fitted.
+--
+-- ok, the message, then what was fitted and what was left out (with the
+-- reason). The parts that go on the weapon leave the inventory; when they
+-- cannot all be placed, nothing changes and the parts are put back.
+function Parts.ApplyBuild(weapon_c, weapon_iid, part_ids)
+    local weapon = PDTI.FindItem(weapon_c, weapon_iid)
+    if not weapon or weapon.item_id ~= Armory.ITEM_ID or type(weapon.data) ~= "table" then
+        return false, "no such weapon"
+    end
+    local d = weapon.data
+    local here, why = Parts.Reachable(weapon_c)
+    if not here then return false, why end
+    local lock = PDTI.WeaponSkins and PDTI.WeaponSkins.LockReason(d)
+    if lock then return false, lock end
+    -- The plan first, then the changes: nothing is touched until the whole
+    -- build is known to work.
+    local bp = Armory.SplitBlueprint(d.blueprint)
+    local fitted, skipped, off = {}, {}, {}
+    local items = {}
+    for _, part_id in ipairs(part_ids or {}) do
+        if type(part_id) == "string" and part_id ~= "" then
+            if set_of(bp)[part_id] then
+                skipped[#skipped + 1] = { part_id = part_id, why = "it is on it already" }
+            else
+                local can, reason = changeable(part_id)
+                if not can then
+                    skipped[#skipped + 1] = { part_id = part_id, why = reason }
+                elseif not Parts.Takes(d.weapon_id, part_id) then
+                    skipped[#skipped + 1] = { part_id = part_id, why = "the " .. weapon_name(d) .. " does not take it" }
+                else
+                    local c, item = Parts.OwnedItem(part_id)
+                    if not item then
+                        skipped[#skipped + 1] = { part_id = part_id, why = "you do not own it" }
+                    else
+                        local new, off_now = change_bp(d, bp, part_id)
+                        if not new then
+                            skipped[#skipped + 1] = { part_id = part_id, why = "the game does not fit it" }
+                        else
+                            bp = new
+                            fitted[#fitted + 1] = part_id
+                            items[#items + 1] = { container = c, item = item }
+                            for _, p in ipairs(off_now or {}) do
+                                if not set_of(off)[p] then off[#off + 1] = p end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #fitted == 0 then
+        local why = #skipped > 0 and skipped[1].why or "there is nothing to fit"
+        return false, "nothing was fitted: " .. tostring(why), fitted, skipped
+    end
+    -- The parts leave the inventory (they are on the weapon now).
+    for _, e in ipairs(items) do
+        if not PDTI.RemoveItem(e.container, e.item.instance_id) then
+            put_back(items)
+            return false, "the parts could not be taken", fitted, skipped
+        end
+    end
+    local placed, reason = place_off(off, weapon_c, d.weapon_id)
+    if not placed then
+        put_back(items)
+        return false, reason, fitted, skipped
+    end
+    set_build(weapon_c, weapon_iid, d, bp)
+    log(string.format("a build of %d part(s) on the %s", #fitted, tostring(d.weapon_id)))
+    local text = string.format("%d part(s) on the %s", #fitted, weapon_name(d))
+    if #off > 0 then text = text .. "; off: " .. names(off) end
+    return true, text, fitted, skipped
 end
 
 -- A slot's name ("Muzzle"; an unknown one from its id).
@@ -563,10 +673,17 @@ function Parts.SellPrice(item)
         total = Parts.Price(d.for_weapon, d.part_id, d.global_value)
     elseif item.item_id == Armory.ITEM_ID then
         total = Armory.TodayPrice(d.weapon_id)
+        -- (A skin's own parts are free: armory_skins.lua.)
+        local skin = {}
+        for _, p in ipairs(PDTI.WeaponSkins and type(d.skin_id) == "string" and PDTI.WeaponSkins.Blueprint(d.skin_id) or {}) do
+            skin[p] = true
+        end
         for _, f in ipairs(Parts.Fitted(d)) do
-            if f.removable then total = total + Parts.Price(d.weapon_id, f.part_id) end
+            if f.removable and not skin[f.part_id] then total = total + Parts.Price(d.weapon_id, f.part_id) end
         end
     end
+    -- A worn weapon sells for less (armory_wear.lua).
+    if item.item_id == Armory.ITEM_ID and PDTI.Wear then total = total * PDTI.Wear.SellFactor(d) end
     return math.floor(total * Parts.SELL_SHARE + 0.5)
 end
 
@@ -584,6 +701,8 @@ function Parts.Sell(c, iid)
     if weapon and item.data.free then return false, "a free weapon sells for nothing: throw it away instead" end
     local price = Parts.SellPrice(item)
     if not PDTI.RemoveItem(c, iid) then return false, "it could not be sold" end
+    -- Its insurance is paid back (armory_insurance.lua).
+    local insured = weapon and PDTI.Insurance and PDTI.Insurance.OnSold(item.data) or 0
     local back = 0
     if weapon and PDTI.Plan and PDTI.Plan.SellMagazines then
         local ok, n = pcall(PDTI.Plan.SellMagazines, item.data)
@@ -596,5 +715,84 @@ function Parts.Sell(c, iid)
     log(string.format("sold %s for %d", name, price))
     local text = "Sold the " .. name .. " for " .. PDTI.Ammo.Money(price)
     if back > 0 then text = text .. " (its magazine: " .. PDTI.Ammo.Money(back) .. " back)" end
+    if insured > 0 then text = text .. " (its insurance: " .. PDTI.Ammo.Money(insured) .. " back)" end
     return true, text
+end
+
+------------------------------------------------------- the game's own mods
+
+-- 0.44.0: the weapon mods the game gives you (the cards after a heist) are
+-- parts of yours. At the menu every one in the game's inventory moves into
+-- the locker as a part item: out of the game's inventory, so it is never
+-- counted twice (the game's own mod menu is closed: there it had no use).
+-- Only on the mod's own save (save_slot.lua): the vanilla save is never
+-- written. A mod with no room in the locker waits in the game's inventory
+-- for the next menu. Ammunition types stay the game's (the ammunition
+-- system owns them), as does anything the game has no part for.
+function Parts.Importable(part_id)
+    local p, m = factory_part(part_id), mod_tweak(part_id)
+    return p ~= nil and m ~= nil and p.type ~= "ammo"
+end
+
+local separate_told = false
+function Parts.ImportGameMods()
+    if not Armory.Enabled() or Armory.InHeist() then return 0, 0 end
+    if rawget(_G, "PDTI_SEPARATE_SAVE") ~= true then
+        if not separate_told then
+            separate_told = true
+            log("the game's weapon mods stay in its inventory: this is the game's own save (not the mod's)")
+        end
+        return 0, 0
+    end
+    local m = rawget(_G, "managers")
+    local bm = m and m.blackmarket
+    if not bm or type(bm.get_inventory_category) ~= "function" or type(bm.remove_item) ~= "function"
+        or type(bm.add_to_inventory) ~= "function" then
+        return 0, 0
+    end
+    local ok, list = pcall(bm.get_inventory_category, bm, "weapon_mods")
+    if not ok or type(list) ~= "table" then return 0, 0 end
+    -- (In a fixed order: the same mods go first every time.)
+    table.sort(list, function(a, b)
+        if tostring(a.id) ~= tostring(b.id) then return tostring(a.id) < tostring(b.id) end
+        return tostring(a.global_value) < tostring(b.global_value)
+    end)
+    local moved, waiting = 0, 0
+    for _, e in ipairs(list) do
+        local n = math.floor(tonumber(e.amount) or 0)
+        if n > 0 and Parts.Importable(e.id) then
+            for i = 1, n do
+                local data = Parts.MakeData(e.id, nil, nil)
+                data.global_value = tostring(e.global_value or data.global_value)
+                local placed = false
+                if PDTI.FindFreeSpace("locker", { item_id = Parts.ITEM_ID, data = data }, true) ~= nil
+                    and bm:remove_item(e.global_value, "weapon_mods", e.id) then
+                    data.uid = Armory.NewUid()
+                    placed = PDTI.AddItemAuto("locker", Parts.ITEM_ID, 1, data, true) == true
+                    -- No room after all: back to the game's inventory.
+                    if not placed then pcall(bm.add_to_inventory, bm, e.global_value, "weapon_mods", e.id, true) end
+                end
+                if placed then
+                    moved = moved + 1
+                else
+                    waiting = waiting + (n - i + 1)
+                    break
+                end
+            end
+        end
+    end
+    if moved > 0 then
+        Armory.Save()
+        local sf = m.savefile
+        if sf and type(sf.save_progress) == "function" then pcall(sf.save_progress, sf) end
+        log(string.format("%d weapon mod(s) from the game moved into the locker", moved))
+        PDTI.Hint(string.format("%d weapon mod(s) you got are in your locker now", moved), 6)
+    end
+    if waiting > 0 then
+        log(string.format("%d weapon mod(s) from the game wait in its inventory: the locker is full", waiting))
+        if moved == 0 then
+            PDTI.Hint(string.format("%d weapon mod(s) you got wait: no room in your locker", waiting), 6)
+        end
+    end
+    return moved, waiting
 end

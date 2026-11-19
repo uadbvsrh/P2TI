@@ -57,7 +57,12 @@ load_part("stash")
 load_part("market")
 load_part("armory")
 load_part("armory_parts")
+load_part("armory_templates")
 load_part("armory_hotmod")
+load_part("armory_insurance")
+load_part("armory_wear")
+load_part("armory_skins")
+load_part("lobby")
 load_part("save_slot")
 load_part("safehouse")
 load_part("deployables")
@@ -65,6 +70,7 @@ load_part("deploy_hud")
 load_part("loadout")
 load_part("gear")
 load_part("body")
+load_part("body_lasting")
 load_part("armour")
 load_part("carry")
 load_part("skill_rules")
@@ -89,6 +95,9 @@ load_part("selftest")
 if PDTI.Safehouse and PDTI.Safehouse.InstallMenuHooks then pcall(PDTI.Safehouse.InstallMenuHooks) end
 if PDTI.Perks and PDTI.Perks.InstallHooks then pcall(PDTI.Perks.InstallHooks) end
 if PDTI.Safehouse and PDTI.Safehouse.InstallBriefingHooks then pcall(PDTI.Safehouse.InstallBriefingHooks) end
+-- Online: PDTI players only meet PDTI players (lobby.lua; hooks_net.lua does it
+-- when the matchmaking classes are loaded after the mod).
+if PDTI.Lobby and PDTI.Lobby.InstallHooks then pcall(PDTI.Lobby.InstallHooks) end
 
 PDTI._loaded = true
 report("Tactical Inventory " .. tostring(PDTI.VERSION) .. " loaded")

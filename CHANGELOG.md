@@ -1,5 +1,415 @@
 # Changelog
 
+## 0.53.0 (Houston sells insurance)
+
+The user: "add dialogue with houston for insurance".
+
+- **`lua/armory_insurance.lua`:** `Insurance.Weapons()` (the insurable weapons dearest first,
+  then by name; the insured by name; each `{ container, instance_id, data, price }`);
+  `Insurance.InsureAll()` (at home, all or nothing: one `Armory.Take` of the sum, a policy
+  each, one save); the policy writing shared as `add_policy` with `Insure`.
+- **`lua/safehouse.lua`:** Houston's room (`american`, action `insurance`): "Insured: ..." or
+  "None of your weapons is insured.", the weapons coming back (`ReturnLines`), "Not insured: ...
+  (the 5 dearest, "and N more"). Lost, an insured weapon is back in your locker <delay> after the
+  heist.", **Insure all ($X)** and up to `Home.REPAIR_BUTTONS` (5) **Insure the X ($Y)**; the
+  result as a hint. Nothing with the armory off.
+- **Tests:** `insurance_tests.lua` +24 (106). 3786 checks. Mutation check: 70 mutants, 2
+  survive (a log line, a name tie-break).
+
+Defaults for the user to review: the weapon view's price and Duke's discounts apply; Insure all
+is all or nothing; at most 5 weapon buttons, dearest first; no Cancel in Houston's menu (the
+weapon view has it).
+
+## 0.52.0 (the medic bag at $35,000)
+
+The user: "make price for medic bag 35k".
+
+- **`lua/ammo.lua`:** `Ammo.PRICES.item.doctor_bag` 35000 (was 12000). The bring list, its
+  refunds and the heist's restock all read it.
+- **Tests:** `bag_price_tests.lua` +1. 3762 checks.
+
+## 0.51.0 (the locker scrolls, 12x20)
+
+The user: "make locker scrollable". Answer: "12x20, show 8 rows".
+
+- **`lua/inventory.lua`:** `PDTI.LOCKER` 12x20 (was 12x10). Saved items keep their cells.
+- **`lua/ui_beardlib.lua`:**
+  - `draw_grid(win, container, x, y, model, first_row, rows)`: only those rows, the first at
+    `y` (other grids unchanged).
+  - `LOCKER_VIEW` 8, `LOCKER_STEP` 2; `PDTI.UILockerScroll(delta)` keeps `view.locker_top` in
+    bounds and returns top, rows, total.
+  - The Locker tab: **Up** / **Down** buttons and "Rows a-b of 20 (the mouse wheel scrolls)".
+  - `wheel_dir(button)` (`Idstring("mouse wheel up/down")`); in `_UIMousePressed` the wheel
+    over a locker cell scrolls, redraws, draws the drag preview again while dragging, and takes
+    the press; anywhere else it is left to the game.
+- **Tests:** `ui_tests.lua` +11 (223); `parts_tests.lua` fills the bigger locker. 3761 checks.
+  Mutation check: 36 mutants of the new lines, none survive (the redundant wheel guards and a
+  "changed?" check were removed).
+
+Defaults for the user to review: 8 rows shown, 2 rows per wheel step; the scroll position is
+kept while the screen is open and across redraws; a weapon sent to the locker with Ctrl+click
+lands in the first free cell, which may be out of view (the screen does not scroll to it).
+
+## 0.50.0 (Rust repairs your weapons)
+
+The user: "i've changed my mind on ledger, but add dialogue option with rust for repairs". The
+heist ledger is dropped.
+
+- **`lua/armory_wear.lua`:** `Wear.Worn()` (your weapons under 100%, not free, as
+  `{ container, instance_id, data, cond, price }`, worst first, then by name);
+  `Wear.RepairAll()` (at home, all or nothing: one `Armory.Take` of the sum, then `cond = 100`
+  on each through one `PDTI.EditItems`; "Repaired N weapon(s) for $X: 100%").
+- **`lua/safehouse.lua`:** Rust's room (`wild`, action `repair`): a "Worn: ..." line (the 5
+  most worn named, "and N more"), **Repair all ($X)** and up to `Home.REPAIR_BUTTONS` (5)
+  **Repair the X, N% ($Y)** buttons (`Wear.Repair`); nothing worn: "Your weapons are in full
+  condition."; the result as a hint. Not shown with the armory off.
+- No clearing of heist wear on repair was needed: the menu's `Wear.Apply(true)` empties the
+  heist values before you are at home.
+- **Tests:** `wear_tests.lua` +19 (119). 3750 checks. Mutation check: 50 mutants of the new
+  lines, none survive.
+
+Defaults for the user to review: the weapon view's price (20% of the built price from 0%), no
+discount from Rust's tier; Repair all is all or nothing; at most 5 weapon buttons; insured
+weapons waiting to come back are not listed (not items yet).
+
+## 0.49.0 (weapon skins, through Sydney)
+
+The user: "start working on skins, add dialogue with sydney to change the skins for weapons".
+Plan answers: a skin list (now Sydney's screen, the weapon view shows the skin); "Any number of
+guns"; legendary fixed parts "Free, gun locked"; StatBoost "Yes, as in game".
+
+- **New `lua/armory_skins.lua` (`PDTI.WeaponSkins`):**
+  - Item data: `skin_id`, `skin_iid`, `skin_quality`, `skin_bonus`, `skin_color` (cleared to
+    false).
+  - `Owned(weapon_id)`: `get_inventory_tradable()` entries of category `weapon_skins` that
+    `weapon_cosmetics_type_check` allows, one per skin (StatBoost first, then quality
+    mint > fine > general > worn > poor); plus `is_a_unlockable` / `is_a_color_skin` skins the
+    game has (`has_item(global_value, "weapon_skins", id)`, the DLC unlocked). Colours get
+    `color = 1`. Sorted by name.
+  - `Apply(c, iid, skin_id)` / `Remove(c, iid)`: at home, an owned skin. A legendary skin
+    (`default_blueprint`) replaces the build; your buyable parts go through `Parts.PlaceOff`
+    (all or none). Removing one gives `DefaultBlueprint` plus the parts fitted beside it.
+    A build change goes through `Parts.SetBuild` (weight, insurance, plan, hands); otherwise
+    `SyncEquipped` + `ApplyHands` for a gun in hand.
+  - `LockReason(d)`: a `locked` skin refuses `Parts.CanFit` and `Parts.ApplyBuild`.
+  - `Sweep()` at the menu (`Armory.OnMenu`, after insurance): a skin whose copy is no longer
+    in the tradable list (or colour no longer unlocked) comes off. Nothing without a Steam
+    inventory.
+- **`lua/armory.lua`:** `Armory.Cosmetics(d)` (`{id, instance_id, quality, bonus,
+  color_index, pattern_scale = weapon_color_pattern_scale_default}`), `Armory.BuildKey(d)`
+  (blueprint + skin: the unit tag, so a skin change remakes the gun in hand); `put_in` passes
+  cosmetics; `Build` carries `cosmetics`, `customize_locked` and `locked_name`; `same_build`
+  compares the cosmetics; `BuildPrice` leaves out the skin's own parts; the file keeps the skin
+  fields of captured weapons and returns (a StatBoost only when true).
+- **`lua/armory_parts.lua`:** `Parts.PlaceOff` exported; `SellPrice` leaves out the skin's own
+  parts; the lock in `CanFit` and `ApplyBuild`.
+- **`lua/armory_insurance.lua`:** `Claim` copies the skin fields.
+- **`lua/safehouse.lua`:** Sydney's room (`sydney`, action `skins`): **Weapon skins** opens
+  `PDTI.OpenSkins()`.
+- **`lua/ui_beardlib.lua`:** `view.skins_mode`: the centre window alone (`draw_skins`): your
+  weapons (hands first, 9 a page), a weapon's skins (on it marked), Remove, Back, the status,
+  Close. The weapon view's "Skin: ..." line.
+- **Tests:** new `skins_tests.lua` 83. 3731 checks. Mutation check: 334 mutants of the new and
+  changed lines, survivors fixed with tests; what remains is the file guard, the log, display
+  guards, the layout's `y` steps, sort tie-breaks and resets on close (plus unrelated locker
+  lines the pattern matched).
+
+Defaults for the user to review: Sydney's screen at any room tier, free of charge; your best
+copy is picked for you (no choosing between copies); a colour uses its first colour and the
+default pattern; a plain skin change keeps insurance, a legendary one (a build change) ends it
+and pays it back; market and free weapons come without a skin but can wear one; skins change
+only at home.
+
+## 0.48.0 (lasting body damage, Dallas's heal)
+
+The user: "make that damaged body parts would stay with the player even after the end of the
+heist, and add option in dialogue with dallas in which you can heal everything for 15000".
+Answers: no free heal between heists; black parts stay black; ended in custody "all parts at 0
+hp, only head is at 1 hp"; "$15,000, also menu"; "yes".
+
+- **New `lua/body_lasting.lua` (`PDTI.BodyLasting`):**
+  - The file `pdti_save_body_profile<n>.json` (`PDTI.SaveFileName("body")`, else
+    `pdti_body.json` / `pdti_body_profile<n>.json`): `{ frac = { part = 0..1 }, in_heist }`,
+    clamped, nonsense full. Written at once (not the inventory).
+  - `OnLevelStart` (`heist_start.lua`, after `Body.OnHeistStart`, and for the safehouse before
+    its early return) sets `Body.start_frac` from the file and marks a heist `in_heist`.
+  - `OnMissionEnd` (`stash.lua`'s end-screen hook): no player unit (custody), a downed state
+    (`bleed_out`, `fatal`, `incapacitated`, `arrested`) or a black head: every part 0 and the head
+    `EFFECTS.revive_head` (1 HP); otherwise `Body.state.frac`. Not in the safehouse.
+  - `OnMenu` (`safehouse.lua`'s menu hook, after the armory): a heist still marked (left, quit)
+    ends down; then `Body.ShowParts` (the screen's parts, no owner).
+  - `HealAll`: at home only, hurt only, `PRICE` 15,000 from `managers.money`, every part 1,
+    saved; in the safehouse `Body.FullHeal` (the game's health too).
+- **`lua/body.lua`:** `reset_start` uses `Body.start_frac` once (Frenzy's start-black still
+  applies); `attach` lifts a carried head to the revive value; `Body.FullHeal`,
+  `Body.ShowParts` (not with a live owner), `Body.push_health` exported.
+- **`lua/safehouse.lua`:** Dallas's room (`russian`, action `heal`): "Hurt: ..." line and
+  **Heal everything ($15,000)** when hurt; the hint says what happened.
+- **`lua/ui_beardlib.lua`:** the shop's **Health** tab ("Health (hurt)") at home: the health
+  figure (`draw_health` takes a position and returns its height), Heal everything / "You are not
+  hurt.", a line on lasting damage, the status.
+- **Tests:** new `lasting_tests.lua` 57. 3648 checks. Mutation check: 165 mutants of the new
+  lines, 13 survive (the file guard, log lines, initial values, the file's error paths, and the
+  in-heist health window's existing line); dead code found by it removed.
+
+Defaults for the user to review: custody *during* a heist still gives a fresh body; leaving or
+quitting a heist counts as ending down; overheal and the Painkillers delay are not carried;
+nothing in the safehouse hurts you lastingly; a flat $15,000 with no Dallas tier discount; with
+health per body part off, none of this.
+
+## 0.47.0 (weapon condition: wear, jams, repair)
+
+The user picked "Weapon condition" from `PDTI_IDEAS_HANDOUT.md` (4.2), then: wear "By class,
+~2500 rds", clear a jam with "Its own key", at 0% "Only jams more", repair "Home, cheaper (20%)";
+"yes, build now".
+
+- **New `lua/armory_wear.lua` (`PDTI.Wear`):**
+  - `Wear.ROUNDS` (100% -> 50%): minigun 1,000, lmg 1,500, snp 3,500, pistol 3,500, others
+    2,500 (by the weapon's tweak categories). `PerRound` = 50 / rounds.
+  - `JamChance`: 0 at >= 50%, then linear to `JAM_MAX` 0.1 at 0%. `JamText` for the view.
+  - The condition is the weapon item's `data.cond` (missing: 100). `Wear.Cond` reads the heist's
+    live value first. Free weapons are always 100.
+  - In a heist: the wrapped `NewRaycastWeaponBase.fire` calls `Wear.OnShot` when the game fired
+    (an akimbo second gun counts for its parent's uid, `_pdti_uid` from `armory.lua`'s
+    `tag_unit`). Not at home or in the safehouse. The weapon item of a uid is looked up once
+    (`Wear.known`).
+  - A jam: `Wear.jammed[uid]`, the gun's `stop_shooting` (the automatic fire sound), the hint,
+    and a write. The wrapped `NewRaycastWeaponBase.start_shooting_allowed` returns false for a
+    jammed gun, so `PlayerStandard` never reaches `trigger_*` / `fire`: no round is used.
+    `PlayerStandard._check_action_primary_attack` is wrapped for the click (`dryfire`) and the
+    hint on a press.
+  - The Clear Jam key (`mod.txt` keybind `pdti_clear_jam`, `lua/ui_clear_jam.lua`):
+    `Wear.StartClear`; `Wear.Tick` (each frame, `hooks_game.lua`) clears after `CLEAR_TIME`
+    1 s, and stops if the equipped gun changes or a reload starts.
+  - Saving: the heist's wear goes into the armory file (`wear = { "<uid>": cond }`), at the first
+    shot, then at most every 30 s, on a jam and at `Armory.OnMissionEnd`. `Armory.OnHeistStart`
+    seeds the live values from it (the next day of a heist). `Armory.OnMenu` calls `Wear.Apply`
+    (not final) before `ApplyLost`, so `Insurance.Claim` copies the lost condition, and
+    `Wear.Apply(true)` after `ApplyCaptured` / `HotMod.ApplyWin`, which clears the file's table.
+  - Repair: `Wear.RepairPrice` = built price x 20% x wear / 100; `Wear.Repair` at home only.
+    `Wear.SellFactor` = 0.5 + cond / 200, used in `Parts.SellPrice` for weapons.
+- **`lua/armory.lua`:** the file's `wear` table is sanitized (clamped 0..100); `cond` is kept on
+  captured and returning weapons. **`lua/armory_insurance.lua`:** a return keeps the lost
+  weapon's `cond`.
+- **`lua/ui_beardlib.lua`:** the wear bar (`pdti_wear_bar`) on the hand boxes and the item's
+  first grid cell (not at 100%); the view's "Condition N%: ..." line and the
+  **Repair for $X (to 100%)** button.
+- **Tests:** new `wear_tests.lua` 100. 3591 checks. Mutation check (each line deleted):
+  `lua/armory_wear.lua` 201 mutants, 11 survive, all the file guard, log lines, the test-replaced
+  clock and dice, initial values and a local's declaration; dead code found by it removed. The
+  29 wear lines in `armory.lua`, `armory_insurance.lua`, `armory_parts.lua` and
+  `ui_beardlib.lua`: all caught (a duplicate hook install removed).
+
+Defaults for the user to review: pistols and snipers 3,500 rounds, LMGs 1,500, the minigun
+1,000; the jam chance linear from 50% to 1 in 10 at 0%; a gun at 0% sells for half; parts don't
+wear; an insured gun comes back as worn as it was lost; market and picked-up guns start at 100%;
+an akimbo pair is one condition and a jam stops both; reloading or switching stops a clear;
+nothing wears in the safehouse (the shooting range); the wear is written at most every 30 s
+(a crash loses at most 30 s of wear); the bar is not drawn at 100%; the Clear Jam key has no
+default key.
+
+## 0.46.0 (lobby isolation: PDTI players only meet PDTI players)
+
+The user: "plan the next phase" -> "Lobby isolation" (the armory's rule: "No hosting or joining
+vanilla players"), "Any PDTI version".
+
+- **New `lua/lobby.lua` (`PDTI.Lobby`):**
+  - `ApplyKey` adds `_pdti` to `_BUILD_SEARCH_INTEREST_KEY` of `NetworkMatchMakingSTEAM`,
+    `NetworkMatchMakingEPIC` and `NetworkMatchMaking` (whichever exist with a string key). The game
+    uses that key for a new lobby's attribute, the lobby search's filter, the friends' list and the
+    invite check (`join_server_with_check`). `InstallHooks` wraps those four calls so the key is
+    put back first (another mod may set its own later), wraps `BaseNetworkSession.on_entered_lobby`
+    and `add_peer` to start the looks, and registers the `PDTI_hello` receive hook.
+  - The check (online, with SuperBLT's `LuaNetworking`; looks once a second through
+    `DelayedCalls` while a session exists): hello = "<version>;<1 if I know you>", resent every
+    2 s to who has not answered; the host removes a player 15 s after they could talk (verified,
+    in the lobby or synched, not loading; the clock restarts otherwise) with the chat line to all
+    and the game's own kick (`send_to_peers("kick_peer", id, 0)` + `on_peer_kicked`); a client
+    leaves a silent host's lobby (`MenuCallbackHandler:_dialog_leave_lobby_yes`, a dialog) or, in
+    a heist, warns once. Another version: one local chat line. No `LuaNetworking`: no checks,
+    logged once.
+- **New `lua/hooks_net.lua`;** `mod.txt` hooks it on `lib/network/matchmaking/networkmatchmakingsteam`,
+  `.../networkmatchmakingepic` and `lib/network/base/basenetworksession`. `lua/main.lua` loads
+  `lobby` and installs its hooks.
+- **Tests:** new `lobby_tests.lua` 76 (fake classes after the game's matchmaking and session code).
+  3491 checks. Mutation check of `lua/lobby.lua`: 57 of 57 caught (one dead line removed).
+
+Defaults for the user to review: 15 s from when the player can talk; the game's kick (no rejoin
+of that lobby); a client leaves only in the lobby, never in a heist; always on (no option).
+
+## 0.45.1 (Duke's insurance tiers)
+
+The user: "tier 2 insurence cost 20%, tier 3 back after a loss in 5 mins".
+
+- **`lua/perks.lua`:** `Perks.InsuranceShare`: 20% from tier 2 (tier 3 keeps it);
+  `Perks.InsuranceDelay`: 5 min at tier 3 only (tier 2 keeps 10). Duke's texts: tier 2 "Weapon
+  insurance costs 20% (not 30%)", tier 3 "Also: a lost weapon is back in 5 minutes (not 10)".
+  0.45.0's tier 3 of 10% and 2 minutes is gone.
+- **Tests:** `perks_tests.lua` 149 (the tiers and the lines), `insurance_tests.lua` 82 (tier 2
+  paid 20%, back after 10 min; tier 3 20%, back after 5 min). 3415 checks. Mutation check: 4 of 4.
+
+## 0.45.0 (weapon insurance; Duke's room)
+
+The user: "next phase" (the armory's next step: insurance, set by the user when the armory
+began: "Insurance would cost 30% of built weapon price(includes all mods) and would give back
+weapon 10 real life minutes after the heist ended"). Asked: a payment covers a weapon until it
+is lost; Duke's room: "cheaper and faster insurance".
+
+- **New `lua/armory_insurance.lua` (`PDTI.Insurance`):** `Insure` (at home, not a free weapon,
+  30% of `Armory.BuildPrice` via `Armory.Take`), `Cancel`/`CancelItem` (paid back via
+  `Armory.Give`), `OnBuildChanged` (at home a policy for another build is cancelled and paid back,
+  with a note), `OnSold`, `Claim` (a lost insured weapon: a return `Armory.MakeData` of the insured
+  build, a new uid, no magazine, due `ended_at + Delay()`; another build than the insured one:
+  paid back instead), `Sweep` (at home, nothing waiting to be taken out: a policy whose weapon is
+  gone or has another build is paid back), `Deliver` (due returns into the locker; no room: waits,
+  logged once; a hint), `Tick` (once a second), `Returns`/`ReturnLines`. `Insurance.Now` is the
+  clock (tests replace it).
+- **`lua/armory.lua`:** the file keeps `policies` (by uid), `returns` and `ended_at` (broken
+  entries dropped; `next_uid` past a return's uid); `mark_lost` stamps `ended_at`; `ApplyLost`
+  claims a removed weapon; `OnMenu` sweeps and delivers after `ApplyWin`.
+- **`lua/armory_hotmod.lua`:** `ApplyWin` claims a weapon gone in a won heist.
+- **`lua/armory_parts.lua`:** `set_build` calls `OnBuildChanged`; `Parts.Sell` pays the insurance
+  back and says so.
+- **`lua/perks.lua`:** Duke (`myh`) is "Insurance": `Perks.InsuranceShare` (20% / 10%) and
+  `Perks.InsuranceDelay` (5 / 2 min) at tiers 2 / 3.
+- **Ticks:** `lua/hooks_game.lua` (every frame in game; acts at home only: the safehouse) and
+  `lua/safehouse.lua`'s main-menu update (every frame, not only while a trip waits).
+- **`lua/ui_beardlib.lua`:** the weapon view's Insure / insured line + Cancel / free-weapon line
+  and the note after a change; a blue `pdti_ins_mark` on an insured weapon's top-right grid cell
+  and its PRI/SEC box; return lines under the Locker label and in the market's Weapons tab.
+- **Tests:** new `insurance_tests.lua` 80; `perks_tests.lua` 149, `hooks_tests.lua` 28,
+  `safehouse_tests.lua` 203. 3413 checks. Mutation check of the new code: 45 of 45 caught (one
+  redundant condition removed: `Armory.InHeist` already counts a session-only inventory).
+
+Defaults for the user to review: the game's normal prices (not the day's); back without its
+magazine; always into the locker; any change at home cancels and pays back; thrown away in a
+heist counts as lost; Duke tier 2 = 20% / 5 min, tier 3 = 10% / 2 min; return times as clock time.
+
+## 0.44.1 (loot prices sorted by price)
+
+The user: "sort loot in the market by prices".
+
+- **`lua/market.lua`:** `Market.Catalog()` sorts by today's price (`now`), dearest first; the
+  same price by name, then id. Its only user is the price list on Scarface's Market screen.
+- **`lua/ui_beardlib.lua`:** the list's label says "dearest first".
+- **Tests:** `market_tests.lua` 84 (the order, today's price over the real one, the same price
+  by name), `ui_tests.lua` 212 (the rows' order, the graph on the first row). 3327 checks.
+
+## 0.44.0 (the game's mods into the locker, parts mark their weapons, ammo box reasons)
+
+The user: "make that all weapon mods player have would be in the stash, and that when you drag
+weapon mod all compatable weapons would be marked with green. Also when player goes into the
+heist with no guns, and then takes one, he still cant take ammo boxes for loose ammo". Asked:
+the stash is the locker, the mods are the game's own (drops); the box stayed on the floor; the
+build's skills are not known.
+
+- **`lua/armory_parts.lua`:** `Parts.Importable(part_id)` (a factory part with a black market
+  entry, not ammunition) and `Parts.ImportGameMods()`: at home, on the mod's own save only
+  (`PDTI_SEPARATE_SAVE`), every mod of `managers.blackmarket:get_inventory_category("weapon_mods")`
+  is taken out with `remove_item` and added to the locker as a part item (its global value, a
+  new uid); refused by the locker after all, it is given back (`add_to_inventory`). One that
+  has no room waits; the progress is saved once (`save_progress`), the armory too; a hint and a
+  log line. `Armory.OnMenu` calls it.
+- **`lua/ui_interaction.lua`:** `PDTI.UIFitWeapons()`: for a held part, the weapons of yours
+  whose kind takes it (`Parts.Takes`), by container and instance id.
+- **`lua/ui_beardlib.lua`:** `show_fit_marks()` tints those weapons' drawn cells (the grid's
+  and PRI/SEC's boxes) light green (`pdti_fit_mark`, layer 49, under the placement preview);
+  `show_preview` draws them first, on every move, and the drop clears them.
+- **`lua/skills_ammo.lua`:** `AS.TellBoxRefused()`: the first standard box a heist refuses
+  for Bulletstorm or Extra Lead hints which skill (reset in `AS.OnHeistStart`).
+- **`lua/ammo_hooks.lua`:** `Ammo.BoxLeftReason(unit)` (each gun: no weapon in your hands, why it
+  is not managed, or its room and pickup; the bag skills). The box hook logs it when the game's
+  pickup refused a plain box (once a box, once a reason). The unarmed then picked-up case works
+  in the tests; in the game it could not be told apart from the skills, so the log will say.
+- **Tests:** `parts_tests.lua` 212, `ammo_specialist_tests.lua` 113, new `unarmed_box_tests.lua`
+  19 (the armory, the ammunition system and the skills on the game's box pickup). 3323 checks.
+
+## 0.43.0 (Duke opens the Story Line)
+
+The user: "make that interaction with duke will open career mode" (career mode: the game's
+Story Line, their choice).
+
+- **`lua/safehouse.lua`:** `Home.ROOM_ACTIONS.myh = "story"`. Duke's room menu
+  (`ShowRoomMenu`) puts "Story Line (leaves the safehouse, comes back)" first (focused),
+  offline only. `Home.ToStoryLine()` leaves the safehouse marked `to_story` (the shared
+  `leave_for(mark, what)`, which `ToMenuInventory` now uses too). Back in the main menu,
+  `OnMenuMain` plans the menu inventory's trip with `node = Home.STORY_NODE`
+  ("story_missions", the page crime.net's sidebar opens), `what` (its name in the log and
+  the hint) and `offline` (the game's `play_single_player` before the page opens, as crime.net
+  offline does). Backing out to the first page loads the safehouse; a story heist's contract
+  page and the heist are left to the game.
+- **Tests:** `safehouse_tests.lua` 201 (Duke's menu and its order, online, the trip). 3278
+  checks.
+
+## 0.42.0 (the weapons market in pages)
+
+The user: "Now for weapon market make different pages for secondary and primary and for each
+weapon type".
+
+- **`lua/armory.lua`:** `Armory.TYPES` (id, name, short name, in the order a page lists them)
+  and `Armory.Type(weapon_id)`: "akimbo" when the game's categories have it, else the first
+  category when it is a listed type, else "special". `Armory.Catalog()` rows carry `wtype`.
+- **`lua/ui_beardlib.lua`:** `weapon_view(rows)` splits the catalog by page (primaries,
+  secondaries) and type, settles `view.weapon_page`, `view.weapon_type` (an empty page or a
+  type the page lacks gives way to the first that has weapons) and `view.weapon_pick` (one of
+  the list shown). The middle window calls it first (it is drawn before the list). The list
+  (`draw_weapon_prices`) has the page buttons `wmarket_page_<page>` ("Primary (n)"), the type
+  buttons `wmarket_type_<type>` (four a row), and the label "<type name>  (n)". A page button
+  resets the type.
+- **Tests:** `ui_tests.lua` 211 (the pages, the types and their order, the pick following
+  them); `pictures_tests.lua` 88 (the Chimano on the Secondary page, the page kept). The
+  guide's test table gets `template_tests.lua` (46), left out in 0.41.0. 3266 checks.
+
+## 0.41.0 (the weapon's view around the weapon, and build templates)
+
+The user: "start working on gun build templates, and in weapon mod menu make that in center
+would be the image of the weapon, mod slots would be on top and bottom sides. for example
+sights and gadgets should be on the top side, while handle and foregrip on bottom".
+
+- **The weapon's view is built around the weapon** (`lua/ui_beardlib.lua`):
+  - The picture of the weapon (the game's own icon, `ui_pictures.lua`) is in the **middle**
+    of the view, 120 high (at scale 1; it was 72 and at the top).
+  - The slots are around it: the ones **on top of the weapon** (the sights, the gadgets, the
+    boosts) above the picture, the ones **under the weapon** (the grip, the handguard, the
+    vertical grip, the stock, the magazine, and the weapon's own parts: the barrel, the
+    muzzle, the receivers, the slide) below it.
+  - `TOP_TYPES`, `TOP_ORDER` and `BOTTOM_ORDER` say what goes where; `slot_bands()` splits
+    the slots and orders them, `draw_slot_band()` draws a band, `draw_slot_box()` a box.
+  - The slots keep their boxes and their behaviour (drag a part onto one to fit it, drag
+    yours out, Ctrl+click it). Their numbers follow the new order: the top band first.
+  - The picture of a **part's** view stays as it was (at the top).
+- **New `lua/armory_templates.lua` (`PDTI.Templates`): gun build templates.** A template is
+  the parts you fitted on a weapon, beyond the weapon's own: a recipe, not a copy of the
+  parts.
+  - `Save(weapon_data)`: the build of a weapon becomes a template, named after the weapon
+    ("AMCAR build", "AMCAR build 2"). The weapon's own parts are not in it.
+  - `All()`, `Find(id)`, `Count()`, `Describe(t)`, `Delete(id)`.
+  - `Apply(id, container, instance_id)`: the parts the weapon takes and you own go on it;
+    the parts that come off become items again (in the locker, or next to the weapon). What
+    is left out is said: a part the weapon does not take, or one you do not own.
+  - The templates are in their own file, one per profile (`pdti_templates.json`, or
+    `pdti_save_templates_profile<n>.json` on the mod's own save). A template without parts
+    is left out; a broken file is ignored.
+  - A build is changed at home: in a heist the templates are not shown (a change takes time
+    there, and a template is a whole build at once).
+- **`lua/armory_parts.lua`:**
+  - `Parts.ApplyBuild(weapon_c, weapon_iid, part_ids)` fits a whole build: the plan is made
+    first (nothing is touched until it is known to work), then the parts leave the
+    inventory, the parts that come off are placed, and the build is set. When they cannot
+    all be placed, nothing changes and the parts are put back.
+  - `Parts.OwnedItem(part_id)`: the part you own as an item (its container and the item).
+  - `change()` is split: `change_bp()` works on a build given (the game's own changer only
+    edits the list given).
+- **The weapon's view shows the templates** (`lua/ui_beardlib.lua`): "Save this build as a
+  template", and a row per template with **Apply** and **Del**. At most eight templates are
+  listed; the rest are counted in a line.
+- **The tests:**
+  - **New `tests/template_tests.lua`:** 43 checks (saving, applying, what is left out and
+    why, the parts that come off, the file, the screen).
+  - `parts_tests.lua`: the slots' new order and the two bands around the picture.
+  - `pictures_tests.lua`: the picture in the middle of the view, 120 high.
+- **`lua/main.lua`** loads the new module; `tests/mock_env.lua` loads it too.
+
 ## 0.40.1 (names on pictures optional)
 
 The user: "make text optional".

@@ -230,6 +230,7 @@ T("and paid back", money.cash == cash + hollow, money.cash - cash)
 local kit = Plan.AddPrice("first_aid_kit")
 T("a first aid kit has a price", kit == Ammo.PRICES.item.first_aid_kit and kit > 0, kit)
 T("a doctor bag costs more than a first aid kit", Plan.AddPrice("doctor_bag") > kit)
+T("  a doctor bag costs $35,000 (0.52.0)", Plan.AddPrice("doctor_bag") == 35000, Plan.AddPrice("doctor_bag"))
 money.spent = 0
 local kits = Plan.Count("first_aid_kit")
 T("adding a deployable pays for it", Plan.Add("first_aid_kit") == true and money.spent == kit

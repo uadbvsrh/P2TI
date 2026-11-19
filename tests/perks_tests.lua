@@ -265,8 +265,19 @@ T("vault tier 2: 4 bags more", Stash.Capacity() == 64)
 set_tier("vault", 3)
 T("vault tier 3: 8 bags more", Stash.Capacity() == 80)
 
-T("bonuses not made yet give nothing", (function()
-  set_tier("myh", 3); return Perks.Level("myh") == 0
+T("Duke (0.45.0): insurance 30% and 10 min below tier 2", (function()
+  set_tier("myh", 1); return Perks.InsuranceShare(0.3) == 0.3 and Perks.InsuranceDelay(600) == 600
+end)())
+T("  tier 2: 20%, still 10 min (0.45.1)", (function()
+  set_tier("myh", 2); return Perks.InsuranceShare(0.3) == 0.2 and Perks.InsuranceDelay(600) == 600
+end)())
+T("  tier 3: 20% and 5 min", (function()
+  set_tier("myh", 3); return Perks.InsuranceShare(0.3) == 0.2 and Perks.InsuranceDelay(600) == 300
+end)())
+T("  his room's lines", (function()
+  local l = Perks.RoomLines("myh", 3)
+  return l[1] == "Bonus: Insurance" and l[2] == "> Tier 2: Weapon insurance costs 20% (not 30%)"
+    and l[3] == "> Tier 3: Also: a lost weapon is back in 5 minutes (not 10)"
 end)())
 
 ------------------------------------------------------------ armour

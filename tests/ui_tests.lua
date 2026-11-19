@@ -580,7 +580,12 @@ do
     and grow.params.text:find("real $2.9k", 1, true) ~= nil, grow and grow.params.text)
   T("  the graph: 7 bars, the last is today", left_w:find("market_graph_bar_7") ~= nil and left_w:find("market_graph_bar_8") == nil
     and left_w:find("market_graph_day_7").params.text == "Today")
-  T("  at first the graph shows the first type", left_w:find("market_graph_title").params.text:find("gold", 1, true) ~= nil)
+  local order = {}
+  for i, c in ipairs(plist.children) do order[i] = tostring(c.params.name):gsub("^market_price_", "") end
+  T("  dearest today first (0.44.1): the meth, then gold, then the money", order[1] == "loot1" and order[6] == "loot9"
+    and order[7] == "gold" and order[8] == "loot10" and order[14] == "money", table.concat(order, ","))
+  T("  at first the graph shows the first type", left_w:find("market_graph_title").params.text:find("loot1", 1, true) ~= nil,
+    left_w:find("market_graph_title").params.text)
   plist:find("market_price_money"):click()
   T("  a click on a row shows its graph", left_w:find("market_graph_title").params.text:find("money", 1, true) ~= nil
     and left_w:find("market_graph_bar_1") ~= nil and #left_w:find("market_prices").children == 14,
@@ -667,6 +672,15 @@ do
       tweak_data.weapon["rifle_" .. i] = { use_data = { selection_index = 2 }, categories = { "assault_rifle" }, name_id = "Rifle " .. i }
     end
     tweak_data.weapon.pistol_a = { use_data = { selection_index = 1 }, categories = { "pistol" }, name_id = "Pistol A" }
+    -- 0.42.0: more kinds, for the market's pages.
+    tweak_data.weapon.shotgun_p = { use_data = { selection_index = 2 }, categories = { "shotgun" }, name_id = "Shotgun P" }
+    tweak_data.weapon.lmg_p = { use_data = { selection_index = 2 }, categories = { "lmg", "smg" }, name_id = "LMG P" }
+    tweak_data.weapon.akimbo_p = { use_data = { selection_index = 2 }, categories = { "akimbo", "pistol" }, name_id = "Akimbo P" }
+    tweak_data.weapon.bow_p = { use_data = { selection_index = 2 }, categories = { "bow" }, name_id = "Bow P" }
+    tweak_data.weapon.smg_s = { use_data = { selection_index = 1 }, categories = { "smg" }, name_id = "SMG S" }
+    tweak_data.weapon.shotgun_s = { use_data = { selection_index = 1 }, categories = { "shotgun" }, name_id = "Shotgun S" }
+    -- (a modded weapon may name akimbo second)
+    tweak_data.weapon.akimbo_q = { use_data = { selection_index = 2 }, categories = { "smg", "akimbo" }, name_id = "Akimbo Q" }
     local real_fr, real_sr = A.FactorRoll, A.StockRoll
     A.FactorRoll = function() return 0.5 end
     A.StockRoll = function() return 0.3 end
@@ -676,8 +690,59 @@ do
     named("pdti_shop"):find("market_tab_weapons"):click()
     local lw = windows()[1]
     local wl = lw:find("wmarket_prices")
-    T("the Weapons tab: every weapon in a list that scrolls, the loot prices gone", wl ~= nil and #wl.children == 13
-      and wl.params.scrollbar == true and lw:find("market_prices") == nil, wl and #wl.children)
+    local function txt(win, name) local it = win:find(name); return it and tostring(it.params.text) end
+    T("the Weapons tab: a page for primaries and one for secondaries, the loot prices gone",
+      txt(lw, "wmarket_page_primaries") == "Primary (17)" and txt(lw, "wmarket_page_secondaries") == "Secondary (3)"
+      and lw:find("market_prices") == nil, txt(lw, "wmarket_page_primaries"))
+    T("  Primary first, its first type: the 12 rifles in a list that scrolls", wl ~= nil and #wl.children == 12
+      and wl.params.scrollbar == true and wl:find("wmarket_price_rifle_1") ~= nil
+      and txt(lw, "wmarket_prices_label") == "Assault rifles  (12)", wl and #wl.children)
+    T("  a button for each type it has, in order: rifles, shotguns, LMGs, akimbo, special (none for pistols)",
+      txt(lw, "wmarket_type_assault_rifle") == "Rifles" and txt(lw, "wmarket_type_shotgun") == "Shotguns"
+      and txt(lw, "wmarket_type_lmg") == "LMGs" and txt(lw, "wmarket_type_akimbo") == "Akimbo"
+      and txt(lw, "wmarket_type_special") == "Special" and lw:find("wmarket_type_pistol") == nil
+      and lw:find("wmarket_type_snp") == nil
+      and lw:find("wmarket_type_lmg").params.position[1] > lw:find("wmarket_type_shotgun").params.position[1]
+      and lw:find("wmarket_type_special").params.position[2] > lw:find("wmarket_type_akimbo").params.position[2])
+    T("  the middle shows the first rifle", txt(named("pdti_shop"), "wmarket_pick"):find("Rifle 1", 1, true) ~= nil,
+      txt(named("pdti_shop"), "wmarket_pick"))
+    lw:find("wmarket_type_special"):click()
+    lw = windows()[1]
+    T("Special: the bow alone, picked", #lw:find("wmarket_prices").children == 1
+      and lw:find("wmarket_prices"):find("wmarket_price_bow_p") ~= nil and txt(lw, "wmarket_prices_label") == "Special  (1)"
+      and txt(named("pdti_shop"), "wmarket_pick"):find("Bow P", 1, true) ~= nil, txt(named("pdti_shop"), "wmarket_pick"))
+    lw:find("wmarket_type_akimbo"):click()
+    lw = windows()[1]
+    T("  Akimbo: the akimbo weapons (not with the pistols or SMGs), akimbo named first or not",
+      #lw:find("wmarket_prices").children == 2 and lw:find("wmarket_prices"):find("wmarket_price_akimbo_p") ~= nil
+      and lw:find("wmarket_prices"):find("wmarket_price_akimbo_q") ~= nil and lw:find("wmarket_type_smg") == nil)
+    lw:find("wmarket_type_shotgun"):click()
+    windows()[1]:find("wmarket_page_secondaries"):click()
+    T("  from Shotguns to the Secondary page: its first type (pistols), not its shotguns",
+      txt(windows()[1], "wmarket_prices_label") == "Pistols  (1)", txt(windows()[1], "wmarket_prices_label"))
+    windows()[1]:find("wmarket_page_primaries"):click()
+    windows()[1]:find("wmarket_type_lmg"):click()
+    lw = windows()[1]
+    T("  LMGs: the LMG (an LMG the game also calls an SMG)", lw:find("wmarket_prices"):find("wmarket_price_lmg_p") ~= nil
+      and #lw:find("wmarket_prices").children == 1)
+    lw:find("wmarket_page_secondaries"):click()
+    lw = windows()[1]
+    T("the Secondary page: pistols, shotguns, SMGs; the pistol picked", txt(lw, "wmarket_type_pistol") == "Pistols"
+      and txt(lw, "wmarket_type_smg") == "SMGs" and txt(lw, "wmarket_type_shotgun") == "Shotguns"
+      and lw:find("wmarket_type_pistol").params.position[1] < lw:find("wmarket_type_smg").params.position[1]
+      and lw:find("wmarket_type_smg").params.position[1] < lw:find("wmarket_type_shotgun").params.position[1]
+      and lw:find("wmarket_type_assault_rifle") == nil
+      and lw:find("wmarket_page_secondaries").params.background_color ~= lw:find("wmarket_page_primaries").params.background_color
+      and txt(named("pdti_shop"), "wmarket_pick"):find("Pistol A", 1, true) ~= nil, txt(named("pdti_shop"), "wmarket_pick"))
+    lw:find("wmarket_type_smg"):click()
+    T("  SMGs: the SMG", windows()[1]:find("wmarket_prices"):find("wmarket_price_smg_s") ~= nil
+      and txt(named("pdti_shop"), "wmarket_pick"):find("SMG S", 1, true) ~= nil)
+    windows()[1]:find("wmarket_page_primaries"):click()
+    T("  back to Primary: its first type again", txt(windows()[1], "wmarket_prices_label") == "Assault rifles  (12)"
+      and txt(named("pdti_shop"), "wmarket_pick"):find("Rifle 1", 1, true) ~= nil)
+    windows()[1]:find("wmarket_page_secondaries"):click()
+    lw = windows()[1]
+    wl = lw:find("wmarket_prices")
     local prow = wl:find("wmarket_price_pistol_a")
     T("  a row: name, today, normal, how many for sale", prow ~= nil and prow.params.text:find("Pistol A", 1, true) ~= nil
       and prow.params.text:find("1 for sale", 1, true) ~= nil and prow.params.text:find("normal $5.0k", 1, true) ~= nil,
@@ -710,8 +775,54 @@ do
       and shop3:find("shop_tab_locker").params.text == "Locker (2)" and shop3:find("shop_tab_weapons") == nil)
     shop3:find("shop_tab_locker"):click()
     shop3 = named("pdti_shop")
-    T("  the 12x10 locker (the weapon slots are not here)", shop3:find("cell_locker_11_9") ~= nil
-      and shop3:find("cell_locker_12_0") == nil and shop3:find("cell_hand_primary_0_0") == nil)
+    T("  the 12x20 locker, 8 rows shown (the weapon slots are not here)", shop3:find("cell_locker_11_7") ~= nil
+      and shop3:find("cell_locker_11_8") == nil and shop3:find("cell_locker_12_0") == nil
+      and shop3:find("cell_hand_primary_0_0") == nil and PDTI.LOCKER.h == 20)
+    T("  it says which rows", shop3:find("locker_rows").params.text == "Rows 1-8 of 20 (the mouse wheel scrolls)")
+    -- 0.51.0: the locker scrolls.
+    shop3:find("locker_down"):click()
+    shop3 = named("pdti_shop")
+    T("  Down: two rows on, drawn in the same place", shop3:find("cell_locker_0_0") == nil
+      and shop3:find("cell_locker_0_9") ~= nil and shop3:find("cell_locker_0_10") == nil
+      and shop3:find("cell_locker_0_2").params.position[2] == named("pdti_shop"):find("cell_locker_0_2").params.position[2]
+      and shop3:find("locker_rows").params.text == "Rows 3-10 of 20 (the mouse wheel scrolls)")
+    local first_y = shop3:find("cell_locker_0_2").params.position[2]
+    for _ = 1, 10 do shop3:find("locker_down"):click(); shop3 = named("pdti_shop") end
+    T("  not past the end", shop3:find("locker_rows").params.text == "Rows 13-20 of 20 (the mouse wheel scrolls)"
+      and shop3:find("cell_locker_11_19") ~= nil and shop3:find("cell_locker_0_12").params.position[2] == first_y)
+    shop3:find("locker_up"):click()
+    shop3 = named("pdti_shop")
+    T("  Up", shop3:find("locker_rows").params.text == "Rows 11-18 of 20 (the mouse wheel scrolls)")
+    -- The mouse wheel over the locker.
+    _G.Idstring = function(s) return s end
+    local hit = PDTI._UIHit
+    PDTI._UIHit = function() return { container = "locker", x = 0, y = 12 } end
+    T("  the wheel up over it: two rows back, the press taken", PDTI._UIMousePressed("mouse wheel up", 1, 1) == false
+      and named("pdti_shop"):find("locker_rows").params.text == "Rows 9-16 of 20 (the mouse wheel scrolls)")
+    T("  the wheel down", PDTI._UIMousePressed("mouse wheel down", 1, 1) == false
+      and named("pdti_shop"):find("locker_rows").params.text == "Rows 11-18 of 20 (the mouse wheel scrolls)")
+    -- Dragging the pistol: the wheel scrolls, and the preview is under the mouse again.
+    PDTI.UIDragStart("locker", 0, 0)
+    PDTI._UIMousePressed("mouse wheel up", 1, 1)
+    local tinted = 0
+    for _, c in ipairs(named("pdti_shop").children) do tinted = tinted + #(c.rects or {}) end
+    T("  while dragging: scrolled, the preview drawn again", PDTI.UIIsDragging()
+      and named("pdti_shop"):find("locker_rows").params.text == "Rows 9-16 of 20 (the mouse wheel scrolls)" and tinted > 0, tinted)
+    PDTI.UIResetInteraction()
+    PDTI._UIMousePressed("mouse wheel down", 1, 1)
+    PDTI._UIHit = function() return { container = "backpack", x = 0, y = 0 } end
+    T("  not over the locker: left to the game", PDTI._UIMousePressed("mouse wheel up", 1, 1) == nil
+      and named("pdti_shop"):find("locker_rows").params.text == "Rows 11-18 of 20 (the mouse wheel scrolls)")
+    PDTI._UIHit = function() return "window" end
+    T("  over no cell: left to the game", PDTI._UIMousePressed("mouse wheel down", 1, 1) == nil)
+    PDTI._UIHit = hit
+    _G.Idstring = nil
+    T("  without the game's ids the wheel is no wheel", PDTI._UIMousePressed("mouse wheel up", 1, 1) ~= false)
+    for _ = 1, 10 do PDTI.UILockerScroll(-2) end
+    T("  not before the start", select(1, PDTI.UILockerScroll(-2)) == 0)
+    shop3 = named("pdti_shop")
+    PDTI.RedrawUI()
+    shop3 = named("pdti_shop")
     T("  the bought pistol is in the locker, named", shop3:find("cell_locker_0_0").params.text:find("Pistol", 1, true) ~= nil,
       shop3:find("cell_locker_0_0").params.text)
     local function slot_text(s) return tostring(window():find("weapon_box_" .. s).params.text) end

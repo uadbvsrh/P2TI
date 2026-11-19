@@ -90,9 +90,11 @@ local function sanitize(raw)
     -- taken: what you carried when the heist's first spawn came (taken_bp:
     -- the weapons' builds then); after: what a won heist changed (0.39.0,
     -- armory_hotmod.lua).
+    -- policies, returns, ended_at: the insurance (armory_insurance.lua).
     local d = { version = Armory.FILE_VERSION, next_uid = 1, stock = { day = "", bought = {} },
         in_heist = false, brought = {}, lost = {}, captured = {}, free_due = true,
-        taken = {}, taken_bp = {}, taken_set = false, after = { builds = {}, gone = {}, parts = {} } }
+        taken = {}, taken_bp = {}, taken_set = false, after = { builds = {}, gone = {}, parts = {} },
+        policies = {}, returns = {}, ended_at = nil, wear = {} }
     if type(raw) ~= "table" then return d end
     d.free_due = raw.free_due == true
     d.next_uid = math.max(1, math.floor(tonumber(raw.next_uid) or 1))
@@ -142,14 +144,50 @@ local function sanitize(raw)
         local uid = type(w) == "table" and math.floor(tonumber(w.uid) or 0) or 0
         if uid > 0 and type(w.weapon_id) == "string" and type(w.factory_id) == "string" then
             local data = { uid = uid }
-            for _, k in ipairs({ "weapon_id", "factory_id", "category", "blueprint", "name" }) do
+            for _, k in ipairs({ "weapon_id", "factory_id", "category", "blueprint", "name",
+                "skin_id", "skin_iid", "skin_quality" }) do
                 if type(w[k]) == "string" then data[k] = w[k] end
             end
-            for _, k in ipairs({ "w", "h", "weight" }) do
+            if w.skin_bonus == true then data.skin_bonus = true end
+            for _, k in ipairs({ "w", "h", "weight", "cond", "skin_color" }) do
                 if tonumber(w[k]) then data[k] = tonumber(w[k]) end
             end
             d.captured[#d.captured + 1] = { data = data, at = type(e.at) == "string" and e.at or "locker" }
         end
+    end
+    for k, p in pairs(type(raw.policies) == "table" and raw.policies or {}) do
+        local uid = math.floor(tonumber(k) or 0)
+        if uid > 0 and type(p) == "table" and type(p.bp) == "string" and tonumber(p.paid) then
+            d.policies[tostring(uid)] = { paid = math.max(0, math.floor(tonumber(p.paid))), bp = p.bp,
+                name = type(p.name) == "string" and p.name or nil,
+                weapon_id = type(p.weapon_id) == "string" and p.weapon_id or nil, at = tonumber(p.at) or 0 }
+        end
+    end
+    for _, e in ipairs(type(raw.returns) == "table" and raw.returns or {}) do
+        local w = type(e) == "table" and e.data
+        local uid = type(w) == "table" and math.floor(tonumber(w.uid) or 0) or 0
+        if uid > 0 and type(w.weapon_id) == "string" and type(w.factory_id) == "string" and tonumber(e.due) then
+            local data = { uid = uid }
+            for _, k in ipairs({ "weapon_id", "factory_id", "category", "blueprint", "name",
+                "skin_id", "skin_iid", "skin_quality" }) do
+                if type(w[k]) == "string" then data[k] = w[k] end
+            end
+            if w.skin_bonus == true then data.skin_bonus = true end
+            for _, k in ipairs({ "w", "h", "weight", "gun_set", "gun_n", "gun_weight", "cond", "skin_color" }) do
+                if tonumber(w[k]) then data[k] = tonumber(w[k]) end
+            end
+            d.returns[#d.returns + 1] = { data = data, due = math.floor(tonumber(e.due)),
+                name = type(e.name) == "string" and e.name or data.name or data.weapon_id, told = e.told == true }
+            d.next_uid = math.max(d.next_uid, uid + 1)
+        end
+    end
+    d.ended_at = tonumber(raw.ended_at)
+    -- wear: the condition of your weapons after the heist's shots, by uid
+    -- (armory_wear.lua), until the menu puts it onto them.
+    for k, v in pairs(type(raw.wear) == "table" and raw.wear or {}) do
+        local uid = math.floor(tonumber(k) or 0)
+        local c = tonumber(v)
+        if uid > 0 and c and c == c then d.wear[tostring(uid)] = math.max(0, math.min(100, c)) end
     end
     return d
 end
@@ -219,6 +257,34 @@ function Armory.Category(weapon_id)
     if sel == 2 then return "primaries" end
     if sel == 1 then return "secondaries" end
     return nil
+end
+
+-- The market's pages (0.42.0): a weapon's type, from the game's categories
+-- (akimbo first; a kind not listed here is Special: bows, launchers, saws,
+-- miniguns, flamethrowers). In the order a page lists them: the primaries'
+-- rifles, shotguns, LMGs, snipers, akimbo, special; the secondaries'
+-- pistols, SMGs, shotguns, special.
+Armory.TYPES = {
+    { id = "assault_rifle", name = "Assault rifles", short = "Rifles" },
+    { id = "pistol", name = "Pistols", short = "Pistols" },
+    { id = "smg", name = "Submachine guns", short = "SMGs" },
+    { id = "shotgun", name = "Shotguns", short = "Shotguns" },
+    { id = "lmg", name = "Light machine guns", short = "LMGs" },
+    { id = "snp", name = "Sniper rifles", short = "Snipers" },
+    { id = "akimbo", name = "Akimbo", short = "Akimbo" },
+    { id = "special", name = "Special", short = "Special" }
+}
+
+function Armory.Type(weapon_id)
+    local t = weapon_tweak(weapon_id)
+    local cats = t and type(t.categories) == "table" and t.categories or {}
+    for _, c in ipairs(cats) do
+        if c == "akimbo" then return "akimbo" end
+    end
+    for _, ty in ipairs(Armory.TYPES) do
+        if ty.id == cats[1] and ty.id ~= "special" then return ty.id end
+    end
+    return "special"
 end
 
 function Armory.FactoryId(weapon_id)
@@ -296,6 +362,9 @@ end
 function Armory.BuildPrice(w)
     if type(w) ~= "table" then return 0 end
     local bp = type(w.blueprint) == "table" and w.blueprint or Armory.SplitBlueprint(w.blueprint)
+    -- A skin's own parts are free (armory_skins.lua).
+    local S = PDTI.WeaponSkins
+    if S and w.skin_id then bp = S.WithoutSkinParts(w.skin_id, bp) end
     return Armory.BasePrice(w.weapon_id) + Armory.PartsPrice(w.weapon_id, w.factory_id, bp)
 end
 
@@ -346,7 +415,7 @@ function Armory.Catalog()
         if type(id) == "string" and type(t) == "table" and Armory.Category(id) and Armory.FactoryId(id) and unlocked(id) then
             local normal = Armory.BasePrice(id)
             rows[#rows + 1] = {
-                weapon_id = id, name = Armory.Name(id), category = Armory.Category(id),
+                weapon_id = id, name = Armory.Name(id), category = Armory.Category(id), wtype = Armory.Type(id),
                 normal = normal, today = Armory.TodayPrice(id), stock = Armory.Stock(id),
                 factor = Armory.Factor(id)
             }
@@ -560,8 +629,12 @@ function Armory.Build(cat)
     local item = Armory.HandItem(cat)
     if item then
         local d = item.data
-        return { equipped = true, weapon_id = d.weapon_id, factory_id = d.factory_id,
-            blueprint = Armory.SplitBlueprint(d.blueprint), global_values = {} }
+        local build = { equipped = true, weapon_id = d.weapon_id, factory_id = d.factory_id,
+            blueprint = Armory.SplitBlueprint(d.blueprint), global_values = {}, cosmetics = Armory.Cosmetics(d) }
+        -- A locked skin (armory_skins.lua): the game's screens show it so.
+        local sk = PDTI.WeaponSkins and PDTI.WeaponSkins.Tweak(d.skin_id)
+        if sk then build.customize_locked, build.locked_name = sk.locked, sk.rarity == "legendary" end
+        return build
     end
     local f = Armory.FALLBACK[cat]
     return { equipped = true, weapon_id = f.weapon_id, factory_id = f.factory_id,
@@ -571,6 +644,8 @@ end
 local function same_build(a, b)
     if type(a) ~= "table" or type(b) ~= "table" then return false end
     if a.weapon_id ~= b.weapon_id or a.factory_id ~= b.factory_id or not a.equipped then return false end
+    local ca, cb = a.cosmetics or {}, b.cosmetics or {}
+    if ca.id ~= cb.id or ca.instance_id ~= cb.instance_id or ca.color_index ~= cb.color_index then return false end
     return Armory.JoinBlueprint(a.blueprint) == Armory.JoinBlueprint(b.blueprint)
 end
 
@@ -637,6 +712,26 @@ end
 
 -- A weapon out of the player's hands (never the last one: the game needs
 -- one). The unit goes the way the game removes a replaced weapon.
+-- A weapon's skin (armory_skins.lua) as the game's cosmetics, or nil.
+function Armory.Cosmetics(d)
+    if type(d) ~= "table" or type(d.skin_id) ~= "string" then return nil end
+    local c = { id = d.skin_id, instance_id = d.skin_iid or d.skin_id, quality = d.skin_quality or "mint",
+        bonus = d.skin_bonus == true, color_index = tonumber(d.skin_color) }
+    -- A weapon colour: the game's default pattern size.
+    if c.color_index then
+        local td = rawget(_G, "tweak_data")
+        c.pattern_scale = td and td.blackmarket and td.blackmarket.weapon_color_pattern_scale_default
+    end
+    return c
+end
+
+-- What a gun in your hands is made from: the build and the skin.
+function Armory.BuildKey(d)
+    local key = tostring(d.blueprint or "")
+    if type(d.skin_id) == "string" then key = key .. "#" .. d.skin_id .. ":" .. tostring(d.skin_color or "") end
+    return key
+end
+
 -- Which weapon item a unit in your hands is: its uid on the unit, and the
 -- build (the item's blueprint text) it was made with.
 local function tag_unit(unit, uid, blueprint)
@@ -690,7 +785,7 @@ local function load_gun(inv, sel, cat, d)
     local entry = selections(inv)[sel]
     local unit = entry and entry.unit
     if unit == nil then return end
-    tag_unit(unit, d.uid, d.blueprint)
+    tag_unit(unit, d.uid, Armory.BuildKey(d))
     local Ammo = PDTI.Ammo
     if not Ammo or not Ammo.LoadGun then return end
     local ok, done = pcall(Ammo.LoadGun, unit:base(), d)
@@ -729,7 +824,7 @@ local function take_out(inv, sel)
 end
 
 local function put_in(inv, d)
-    inv:add_unit_by_factory_name(d.factory_id, false, true, Armory.SplitBlueprint(d.blueprint))
+    inv:add_unit_by_factory_name(d.factory_id, false, true, Armory.SplitBlueprint(d.blueprint), Armory.Cosmetics(d))
 end
 
 -- No weapon in your hands. The game cannot run without a weapon unit, so
@@ -816,9 +911,9 @@ local function apply_inventory(inv)
             -- (at spawn, or picked up) is taken as it is.
             if same then
                 local bp = unit_bp(cur.unit)
-                same = bp == nil or bp == d.blueprint
+                same = bp == nil or bp == Armory.BuildKey(d)
             end
-            if same then tag_unit(cur.unit, d.uid, d.blueprint) end
+            if same then tag_unit(cur.unit, d.uid, Armory.BuildKey(d)) end
         end
         if d and not same then
             -- The game deletes the weapon it replaces: its gun is read first.
@@ -1027,6 +1122,8 @@ function Armory.OnHeistStart()
     d.taken, d.taken_bp, d.taken_set = {}, {}, false
     Armory._dropped = {}
     Armory.Save()
+    -- The wear goes on from what earlier days of the heist wrote.
+    if PDTI.Wear then pcall(PDTI.Wear.OnHeistStart) end
     return true
 end
 
@@ -1042,6 +1139,10 @@ local function union(a, b)
 end
 
 local function mark_lost(d)
+    -- When the heist ended: an insured weapon lost in it comes back a while
+    -- after (armory_insurance.lua).
+    local I = PDTI.Insurance
+    d.ended_at = I and I.Now() or os.time()
     local have = {}
     for _, uid in ipairs(d.lost) do have[uid] = true end
     for _, uid in ipairs(d.brought) do
@@ -1057,6 +1158,8 @@ end
 -- (a heist never writes the menu inventory).
 function Armory.OnMissionEnd(success)
     if not Armory.Enabled() or (PDTI.InSafehouse and PDTI.InSafehouse()) then return 0 end
+    -- The last shots' wear is written (armory_wear.lua).
+    if PDTI.Wear then pcall(PDTI.Wear.Flush) end
     local d = get()
     if success then
         -- Won: what you left on the ground is lost, what you picked up and
@@ -1100,6 +1203,10 @@ function Armory.ApplyLost()
         if PDTI.RemoveItem(e.container, e.item.instance_id) then
             n = n + 1
             log(string.format("lost %s", tostring(e.item.data.weapon_id or e.item.data.part_id)))
+            -- Insured: it comes back (armory_insurance.lua).
+            if e.item.item_id == Armory.ITEM_ID and PDTI.Insurance then
+                pcall(PDTI.Insurance.Claim, e.item.data, d.ended_at)
+            end
         end
     end
     d.lost = {}
@@ -1124,9 +1231,23 @@ function Armory.OnMenu()
         Armory.Save()
         log(string.format("a heist was left unfinished: %d weapon(s) lost", n))
     end
+    -- The heist's wear onto the weapons first: a lost insured weapon comes
+    -- back as worn as it was lost (armory_wear.lua).
+    if PDTI.Wear then pcall(PDTI.Wear.Apply, false) end
     pcall(Armory.ApplyLost)
     pcall(Armory.ApplyCaptured)
     if PDTI.HotMod and PDTI.HotMod.ApplyWin then pcall(PDTI.HotMod.ApplyWin) end
+    if PDTI.Wear then pcall(PDTI.Wear.Apply, true) end
+    -- The game's own weapon mods (its drops) into the locker (armory_parts.lua).
+    if PDTI.Parts and PDTI.Parts.ImportGameMods then pcall(PDTI.Parts.ImportGameMods) end
+    -- The insurance: policies with nothing left to cover are paid back, the
+    -- weapons due back come in (armory_insurance.lua).
+    if PDTI.Insurance then
+        pcall(PDTI.Insurance.Sweep)
+        pcall(PDTI.Insurance.Deliver)
+    end
+    -- A skin you no longer own comes off (armory_skins.lua).
+    if PDTI.WeaponSkins then pcall(PDTI.WeaponSkins.Sweep) end
     pcall(Armory.SyncEquipped)
     return true
 end

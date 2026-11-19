@@ -97,13 +97,24 @@ local function reset_full()
 end
 reset_full()
 
+-- The parts the next spawn starts with (body_lasting.lua: the damage the
+-- last heist left), by id, as fractions; nil: full. Used once.
+Body.start_frac = nil
+
 -- A fresh start (a heist, back from custody): the parts a skill wants black
 -- start at 0 (no Painkillers suspension: they did not go black by a hit).
+-- The first spawn of a heist (and the safehouse's) starts as the last heist
+-- left you. Returns true when it did.
 local function reset_start()
     reset_full()
+    local carry = Body.start_frac
+    Body.start_frac = nil
     for _, p in ipairs(Body.PARTS) do
+        local f = type(carry) == "table" and tonumber(carry[p.id])
+        if f then state.frac[p.id] = math.max(0, math.min(1, f)) end
         if p.id ~= "head" and mod("start_black", p.id) == true then state.frac[p.id] = 0 end
     end
+    return type(carry) == "table"
 end
 
 function Body.Enabled()
@@ -299,6 +310,25 @@ function Body.RestoreAll()
     changed()
 end
 
+-- Every part to full, and the game's health with it (Dallas's heal at
+-- home, body_lasting.lua).
+function Body.FullHeal()
+    Body.RestoreAll()
+    local pd = state.owner
+    if pd and Body.push_health then Body.push_health(pd) end
+end
+
+-- At home, with no player: the parts the screen shows (the saved ones).
+function Body.ShowParts(frac)
+    if state.owner then return false end
+    for _, p in ipairs(Body.PARTS) do
+        local f = type(frac) == "table" and tonumber(frac[p.id]) or 1
+        state.frac[p.id] = math.max(0, math.min(1, f))
+    end
+    changed()
+    return true
+end
+
 -- The part a hit of this kind lands on.
 function Body.RollPart(kind)
     local field = kind == "melee" and "melee" or "bullet"
@@ -480,6 +510,8 @@ local function push_health(pd)
     end)
 end
 
+Body.push_health = push_health
+
 -- The parts start with this damage extension (a new one after custody is
 -- full health); a health the parts do not know of is taken in.
 local function attach(pd)
@@ -491,8 +523,12 @@ local function attach(pd)
         state.owner = pd
         state.over = {}
         state.black_at = {}
-        reset_start()
+        local carried = reset_start()
         state.max = max_health(pd)
+        -- (Carried in: the head never starts below its revive value.)
+        if carried and Body.HP("head", state.max) < Body.ReviveHeadHP(state.max) then
+            set_hp("head", Body.ReviveHeadHP(state.max), state.max)
+        end
         local cur = real_health(pd)
         local sum = Body.Sum(state.max)
         if cur < sum - 1e-6 then spread_share(sum - cur, state.max) end

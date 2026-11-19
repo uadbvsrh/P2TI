@@ -53,14 +53,19 @@ PDTI.Ammo.GameTick = function() ticks = ticks + 1 end
 local loot_ticks = 0
 local real_loot = PDTI.Loot.Tick
 PDTI.Loot.Tick = function() loot_ticks = loot_ticks + 1 end
+local ins_ticks = 0
+local real_ins = PDTI.Insurance.Tick
+PDTI.Insurance.Tick = function() ins_ticks = ins_ticks + 1 end
 dofile(ROOT .. "lua/hooks_game.lua")
 local wrapped = PlayerStandard._get_input
 local r = PlayerStandard._get_input({}, 1, 0.016, false)
 T("input passes through while the screen is closed", r.btn_reload_press == true and calls.orig == 1)
 T("the ammunition system runs every frame", ticks == 1, ticks)
 T("the loot follows every frame", loot_ticks == 1, loot_ticks)
+T("insured weapons coming back are looked at every frame (0.45.0; the safehouse)", ins_ticks == 1, ins_ticks)
 PlayerStandard._get_input({}, 2, 0.016, true)
-T("nothing runs while paused", ticks == 1 and loot_ticks == 1)
+T("nothing runs while paused", ticks == 1 and loot_ticks == 1 and ins_ticks == 1)
+PDTI.Insurance.Tick = real_ins
 PDTI.IsUIOpen = function() return true end
 local kept = 0
 local real_keep = PDTI.UIKeepInputBlocked

@@ -129,9 +129,9 @@ Perks.OPTIONS = {
         t2 = "Selling right after a heist pays 65% (not 50%)", t3 = "Selling right after a heist pays 75%" },
     vault = { title = "Stash",
         t2 = "+4 bag places in the stash", t3 = "+8 bag places in the stash" },
-    myh = { title = "Appraisal", ready = false,
-        t2 = "See a bag's quality before picking it up",
-        t3 = "Also see its modifiers, and reroll one bag per heist" },
+    myh = { title = "Insurance",
+        t2 = "Weapon insurance costs 20% (not 30%)",
+        t3 = "Also: a lost weapon is back in 5 minutes (not 10)" },
     joy = { title = "Hacking",
         t2 = "Timed hacks (computers, laptops, hacking devices) run 25% faster",
         t3 = "Also: once per heist a keycard you use is not used up" },
@@ -304,6 +304,18 @@ function Perks.SellNowShare(base)
     local t = Perks.Level("terry")
     if t >= 3 then return math.max(base, 0.75) end
     if t >= 2 then return math.max(base, 0.65) end
+    return base
+end
+
+-- Duke: what weapon insurance costs (a share of the built price) and how
+-- long a lost weapon takes to come back (seconds), armory_insurance.lua.
+function Perks.InsuranceShare(base)
+    if Perks.Level("myh") >= 2 then return math.min(base, 0.20) end
+    return base
+end
+
+function Perks.InsuranceDelay(base)
+    if Perks.Level("myh") >= 3 then return math.min(base, 300) end
     return base
 end
 

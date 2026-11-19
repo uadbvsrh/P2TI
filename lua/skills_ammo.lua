@@ -496,6 +496,20 @@ function AS.BoxRefused(clip, unit)
     return true
 end
 
+-- The first box a heist refuses says why (0.44.0): the box staying on the
+-- floor looked like a fault.
+function AS.TellBoxRefused()
+    if state.box_told then return false end
+    state.box_told = true
+    local which = {}
+    if Skills.Basic("ammo_reservoir") then which[#which + 1] = "Bulletstorm" end
+    if Skills.Basic("ammo_2x") then which[#which + 1] = "Extra Lead" end
+    local names = #which > 0 and table.concat(which, " and ") or "Your ammo bag skills"
+    hint(names .. ": you can't pick up standard ammo boxes (ammo bags refill you)")
+    log("a standard ammo box stays on the floor: " .. names)
+    return true
+end
+
 ------------------------------------------------------------ one shot
 
 function AS.OnFire(weapon_unit)
@@ -578,6 +592,7 @@ local function make_AmmoClip__pickup(orig)
         end
         if AS.BoxRefused(self, unit) then
             AS.TakeBoxExtra()
+            pcall(AS.TellBoxRefused)
             return false
         end
         local picked = orig(self, unit, ...)
@@ -716,6 +731,7 @@ function AS.OnHeistStart()
     state.bags = {}
     state.shot = nil
     state.pending_uses = nil
+    state.box_told = nil
     pcall(AS.TidyPouch)
 end
 

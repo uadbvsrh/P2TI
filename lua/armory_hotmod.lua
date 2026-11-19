@@ -233,7 +233,13 @@ function HotMod.ApplyWin()
     end
     local gone = set_of(after.gone)
     for _, e in ipairs(Armory.Owned(function(_, it) return gone[uid_of(it)] end)) do
-        if PDTI.RemoveItem(e.container, e.item.instance_id) then n = n + 1 end
+        if PDTI.RemoveItem(e.container, e.item.instance_id) then
+            n = n + 1
+            -- An insured weapon thrown away: it comes back (armory_insurance.lua).
+            if e.item.item_id == Armory.ITEM_ID and PDTI.Insurance then
+                pcall(PDTI.Insurance.Claim, e.item.data, d.ended_at)
+            end
+        end
     end
     local wait = {}
     for _, e in ipairs(after.parts) do

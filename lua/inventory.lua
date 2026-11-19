@@ -2,7 +2,7 @@
 local PDTI = rawget(_G, "PDTI") or {}
 _G.PDTI = PDTI
 
-PDTI.VERSION = "0.40.1"
+PDTI.VERSION = "0.53.0"
 PDTI.SCHEMA_VERSION = 6
 
 -- Hooks on game functions. Several parts of the mod can hook the same
@@ -174,7 +174,7 @@ PDTI.CONTAINERS = { "pockets", "rig", "rig_2", "rig_3", "backpack", "gun_primary
 PDTI.GUN_SLOTS = { gun_primary = "primary", gun_secondary = "secondary" }
 PDTI.HAND_SLOTS = { hand_primary = "primaries", hand_secondary = "secondaries" }
 PDTI.STORAGE = { hand_primary = true, hand_secondary = true, locker = true }
-PDTI.LOCKER = { w = 12, h = 10, name = "Locker" }
+PDTI.LOCKER = { w = 12, h = 20, name = "Locker" }
 -- A weapon slot (PRI / SEC) holds one weapon whatever its size, like a
 -- gun's magazine slot: it is one cell, and the weapon takes one cell there.
 PDTI.HAND = { w = 1, h = 1 }

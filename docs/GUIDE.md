@@ -11,6 +11,245 @@ loadouts.
 is no longer a second list next to the inventory, it *is* the inventory. Remove the old
 `InsurgencySandstormStyleReload` folder from `mods/`.
 
+## What changed in 0.53.0
+
+- **Houston insures your weapons.** In the safehouse, talk to Houston. His menu says which of
+  your weapons are insured, which are on their way back (and when), and which are not insured.
+  - **Insure all ($X)**: every weapon that isn't insured, in one payment. Short of money,
+    nothing is insured and the total is shown.
+  - **Insure the AMCAR ($3,300)**: one weapon, for the 5 dearest uninsured ones (more are
+    counted as "and N more"; Insure all covers them).
+  - Same price and rules as the weapon view: 30% of the built price (Duke's room makes it
+    cheaper and faster); the free weapons need none. Cancel stays in the weapon view.
+- **Try it:** talk to Houston in the safehouse and insure a weapon; its locker item gets the
+  insured mark.
+
+## What changed in 0.52.0
+
+- **The medic bag (doctor bag) costs $35,000** (was $12,000), in the bring list and when a
+  heist restocks one you used up.
+
+## What changed in 0.51.0
+
+- **The locker is bigger and scrolls.** It is now **12x20** cells (twice the room) and the
+  Locker tab shows **8 rows** at a time.
+  - Scroll with the **mouse wheel over the locker**, or the **Up** / **Down** buttons above it
+    (2 rows a step). A line says which rows you see ("Rows 3-10 of 20").
+  - The wheel works **while you drag** a weapon or part, so you can carry it to a row further
+    down; the drop preview follows.
+  - The wheel anywhere else does what it did before.
+- **Try it:** open the Locker tab, scroll down with the wheel, and drag a weapon into row 15.
+
+## What changed in 0.50.0
+
+- **Rust repairs your weapons.** In the safehouse, talk to Rust. His menu lists your worn
+  weapons, worst first ("Worn: AMCAR 63%, Chimano 88 40%"), and offers:
+  - **Repair all ($X)**: every worn weapon back to 100% in one payment. Short of money,
+    nothing is repaired and the total is shown.
+  - **Repair the AMCAR, 63% ($1,200)**: one weapon, for the 5 most worn ones (more are counted
+    as "and N more"; Repair all covers them).
+  - The price is the same as in the weapon view: 20% of the built price from 0%.
+  - Nothing worn: "Your weapons are in full condition."
+- The weapon view's Repair button stays.
+- **Try it:** wear a gun in a heist, then talk to Rust in the safehouse and repair it; the
+  hint says what it cost, and the weapon view shows 100%.
+
+## What changed in 0.49.0
+
+- **Weapon skins.** Your weapons can wear the skins and weapon colours you own in the game.
+  **Sydney** changes them: in the safehouse, talk to Sydney and pick **Weapon skins**.
+  - The screen lists your weapons (those in your hands first). Pick one: you see the skins
+    you own that fit it, one row per skin. Click a skin to put it on, **Remove the skin** to
+    take it off. 9 rows a page, with Prev / Next.
+  - **Any number of your guns can wear the same skin.**
+  - With several copies of a skin, your best one is used: a **StatBoost** copy first, then
+    the best quality. A StatBoost works as in the game.
+  - **Weapon colours** (and skins the game unlocks for you) are listed when the game says
+    you have them. A colour uses its first colour and the game's default pattern.
+  - **A legendary skin brings its own parts.** The parts you fitted come off (next to the
+    gun, else the locker, the backpack, the rig; with no room for all of them nothing
+    changes and you are told why). The skin's parts are **free**: they are not in the gun's
+    price or sale price. A locked legendary skin **locks the gun**: no part goes on until
+    Sydney takes the skin off. Taking it off gives the gun its own parts back.
+  - Skins change **at home only** (not in a heist). The weapon view shows what a gun wears.
+  - Others see your skin online (the game's slot wears it). A skin you sell on Steam comes off
+    your gun at the menu, as the game does.
+  - An insured gun that is lost comes back wearing its skin.
+- **Try it:** in the safehouse, talk to Sydney, pick **Weapon skins**, pick your primary,
+  click a skin. Your gun in hand changes at once. Try a legendary one on a gun with parts:
+  check the backpack for the parts that came off.
+
+## What changed in 0.48.0
+
+- **Body damage now lasts between heists.** Each body part keeps the health it had when the
+  heist ended. The next heist (and the safehouse) starts that way.
+  - **Black parts stay black,** with their penalty, until healed. The head never starts below
+    1 HP.
+  - **Nothing heals for free** between heists. In a heist: a first aid kit or a medic bag, as
+    before.
+  - **Ending a heist down or in custody** (won or failed), **or leaving / quitting a heist**:
+    every part comes home at 0 (black), the head at 1 HP.
+  - Back from custody *during* a heist you still get a fresh body; only the end counts.
+- **Dallas heals you:** in the safehouse, talk to Dallas. When you're hurt his menu says what
+  is hurt and has **Heal everything ($15,000)**: every part to full, black ones too, at once.
+- **The menu's Health tab** (the inventory screen, next to Locker) shows your body as the
+  heist's health window does, with the same **Heal everything ($15,000)** button. The tab says
+  "Health (hurt)" while a part is hurt.
+- **Try it:** take a few hits in a heist and finish it. In the menu, open the Health tab: the
+  hurt parts are there. Start another heist: you start hurt. Heal at Dallas or in the tab.
+
+## What changed in 0.47.0
+
+- **Weapon condition.** Your weapons wear as you fire them in a heist.
+  - A weapon starts at **100%**. Each round fired takes a little. A rifle, SMG or shotgun goes
+    from 100% to 50% in about **2,500 rounds**; pistols and snipers in 3,500; LMGs in 1,500;
+    the minigun in 1,000.
+  - **Jams.** Above 50% a gun never jams. Below 50% a shot can jam it, more often as it wears:
+    about 1 shot in 20 at 25%, 1 in 10 at 0%. It never breaks for good.
+  - **A jammed gun doesn't fire:** the trigger only clicks, and no round is used. Press
+    **Clear Jam** to rack it: about 1 second. Switching weapons or reloading stops the clear.
+    **Bind the key first:** Options > Mod Keybinds > Clear Jam (it has no key until you set
+    one).
+  - **Repair at home.** Right-click the weapon (the menu or the safehouse) and press **Repair**.
+    A gun worn down to 0% costs 20% of its built price; less wear costs less (from 50%: 10%).
+  - **Seeing it:** a worn gun has a thin bar along the bottom of its box (PRI, SEC, and its
+    first cell in a grid): green, yellow below 50%, red below 25%. Its view says "Condition 40%:
+    jams about 1 shot in 50." No bar at 100%.
+  - **A worn gun sells for less:** at 0% half its normal sale price.
+  - The free AMCAR and Chimano 88 never wear. Nothing wears in the safehouse. Weapon parts
+    don't wear. New guns (the market, picked up in a heist) start at 100%.
+  - An insured gun that was lost comes back as worn as it was lost.
+- **Try it:** take a bought gun into a heist and fire a few magazines; back home, its view
+  shows less than 100% and a Repair price. To see a jam quickly you need a gun below 50%
+  (about 2,500 rifle rounds).
+
+## What changed in 0.46.0
+
+- **Online, PDTI players only play with PDTI players.**
+  - Crime.net, the server browser, quickplay and your friends' lobbies show only lobbies of PDTI
+    players, and vanilla players don't see yours. An invite or Steam's "Join game" between PDTI
+    and vanilla fails with the game's own "failed to join" dialog.
+  - Any PDTI version plays with any other (0.46.0 or later: older versions are in the vanilla
+    list). A different version is said in the chat, to you only: "Ann has PDTI 0.45.1 (you:
+    0.46.0)".
+  - A host checks everyone who joins (the lobby, and drop-ins in a heist). A player whose game
+    has not answered 15 s after they could (not while loading) is removed with the game's own
+    kick, and the lobby's chat says why: "<name> was removed: this game needs the Tactical
+    Inventory mod (PDTI)".
+  - A client whose host has not answered in 15 s leaves the lobby (a dialog says why). In a heist
+    it only warns: leaving would lose the weapons you brought.
+  - Offline play is the same as before.
+
+## What changed in 0.45.1
+
+- **Duke's room, changed:** tier 2 makes weapon insurance cost 20% (not 30%); tier 3 also brings
+  a lost weapon back in 5 minutes (not 10). (0.45.0's tier 3 of 10% and 2 minutes is gone.)
+
+## What changed in 0.45.0
+
+- **Weapon insurance.** Right-click a weapon at home (the menu or the safehouse) and press
+  **Insure**: it costs 30% of the weapon's built price (the game's normal price of the weapon
+  and of every part on it beyond its own). Free weapons (the AMCAR, the Chimano 88) need none.
+  - It lasts **until the weapon is lost**: won heists don't use it up.
+  - Lost (a failed or abandoned heist, left on the ground or thrown away in a won one), the
+    weapon comes back into your **locker 10 real minutes after the heist ended**, with the build
+    you insured and without its loaded magazine. The time runs while the game is closed; it
+    arrives in the main menu or the safehouse (a heist keeps it until you're home); with a full
+    locker it waits for room. A hint says when it is back.
+  - On its way, the Locker tab and the market's Weapons tab say when: "Insurance: the CAR-4 is
+    back at 14:32".
+  - An insured weapon has a small blue mark in the corner of its box (the grid, PRI, SEC); its
+    view says it is insured and has **Cancel insurance** (paid back).
+  - **Changing an insured weapon at home** (fitting or taking off a part, a build template, what
+    a won heist changed) cancels its insurance and pays it back: insure it again for the new
+    price. Changes made in a heist count once you're home. Selling it or throwing it away at
+    home pays the insurance back too.
+- **Duke's room: insurance.** Tier 2: insurance costs 20% and a lost weapon is back in 5
+  minutes. Tier 3: 10% and 2 minutes. (His Story Line button stays.) (Changed in 0.45.1.)
+
+## What changed in 0.44.1
+
+- **The market's loot prices are sorted by price:** the dearest loot today at the top, the
+  cheapest at the bottom (today's price, with the day's change, not the base value; loot at the
+  same price by name). The graph opens on the top row (or the first loot you have in the stash).
+
+## What changed in 0.44.0
+
+- **The game's own weapon mods are yours as parts.** The mods the game gives you (the cards
+  after a heist, and any it gave before) move into your **locker** as part items the next time
+  you are in the main menu (on the way to the safehouse too), so they are fitted by dragging
+  like bought ones. A hint says how many came in.
+  - They leave the game's inventory as they go (never counted twice). This is done only on the
+    mod's own save (slot 86); on the game's own save they stay where they are.
+  - No room in the locker: the rest wait in the game's inventory and come in at a later menu
+    (a small part still goes into a small place).
+  - Ammunition types (slugs, AP, ...) stay the game's: the ammunition system owns them.
+- **Dragging a part marks the weapons that take it green**: every weapon of yours on the
+  screen (PRI, SEC, the locker, a packed one) that the game lets take that part, also one that
+  has a part of that kind already. Let go on one to fit it, as before.
+- **Ammo boxes after going in unarmed:** a gun you pick up with Pick Up Weapons takes boxes
+  (tested: unarmed, an enemy's Compact-5 picked up, then a CAR-4, each box gives loose rounds).
+  What does keep boxes on the floor:
+  - **Bulletstorm or Extra Lead** (the skills that make ammo bags your ammunition): standard
+    boxes stay on the floor, with or without a gun. The first box of a heist now says so.
+  - A gun at the box limit (two stacks of loose rounds) takes no more, as before.
+  - Anything else is a fault: the log now says why a box stayed ("an ammo box stayed on the
+    floor: new_mp5: room ..., pickup ...", once a reason).
+
+## What changed in 0.43.0
+
+- **Duke opens the Story Line** (the game's campaign, Story Line in crime.net). Talk to Duke in
+  his room: his menu's first button is **Story Line (leaves the safehouse, comes
+  back)**, picked already, so the interact or Enter key takes you there. His room's tier and
+  Upgrade stay in the same menu.
+  - You leave the safehouse for the main menu, and the game's Story Line page opens on its own,
+    offline, as the safehouse is. Start the next story heist there as usual (its contract page
+    opens, then the heist).
+  - Back out of the Story Line to the menu's first page and the safehouse loads again, the way
+    Chains' menu inventory does. After a story heist you come back to the safehouse as after
+    any offline job.
+  - If the page does not open, it is tried once more; then a hint says to open the Story Line
+    yourself (crime.net's sidebar), and backing out still brings you home.
+  - With a crew (online) Duke's menu has no Story Line button.
+
+## What changed in 0.42.0
+
+- **The weapons market has pages** (Scarface's market, the Weapons tab): **Primary** and
+  **Secondary** at the top of the list, each with how many weapons it has, and under them a
+  button for each type of weapon on that page. The list shows that type alone.
+  - **Primary:** rifles, shotguns, LMGs, snipers, akimbo, special.
+  - **Secondary:** pistols, SMGs, shotguns, special.
+  - **Special** is everything else: bows, crossbows, grenade launchers, saws, miniguns,
+    flamethrowers. A weapon with akimbo among its kinds is **Akimbo**.
+  - Only the types a page has get a button. A new page opens on its first type, and the
+    weapon picked in the middle is the first of the list until you pick another.
+  - The market remembers the page and the type while the game runs.
+
+## What changed in 0.41.0
+
+- **The weapon's view is built around the weapon itself:** the picture of the weapon (the
+  game's own icon) is in the middle of the view, and its slots are around it:
+  - **On top of the weapon:** the sights, the gadgets (the laser) and the boosts.
+  - **Under the weapon:** the grip (the handle), the handguard and the vertical grip, the
+    stock, the magazine, and the weapon's own parts (the barrel, the muzzle, the receivers,
+    the slide).
+  - Everything else about the slots is as before: drag a part onto its slot to fit it, drag
+    yours out onto a cell (or Ctrl+click it) to take it off.
+- **Gun build templates:** a build you saved, to put on another weapon.
+  - **Save:** in a weapon's view, **"Save this build as a template"**. The template is the
+    parts you fitted on it, beyond the weapon's own parts.
+  - **Use:** in any weapon's view, **Apply** next to a template. The parts the weapon takes
+    and you own go on it; the parts that come off it become items again (in your locker, or
+    next to the weapon).
+  - **The parts stay yours:** a template is a recipe, not a copy of the parts. You need the
+    parts as items to apply one, and what the template leaves out is said: a part the weapon
+    does not take, or one you do not own.
+  - **Delete:** **Del** next to a template. A template is named after the weapon it was made
+    from ("AMCAR build", "AMCAR build 2").
+  - The templates are in their own file (one per profile): `pdti_templates.json`.
+  - A build is changed at home: in a heist the templates are not shown (a change takes time
+    there, and a template is a whole build at once).
+
 ## What changed in 0.40.1
 
 - **The names on pictures are optional:** Options → General → **"Names on pictures"** (on by
@@ -278,7 +517,7 @@ its own save.
   **level 100, 120 Continental coins, $100,000 spending cash and $100,000 offshore.** The level
   comes the game's way, one level at a time, with its skill points and unlocks.
 - **Every weapon is a grid item.** The inventory's **Locker** tab (in the menu and the
-  safehouse) shows a 12x10 locker and your two hands, Primary and Secondary (in 0.37.1 the hands
+  safehouse) shows a 12x10 locker (12x20 since 0.51.0, scrolling) and your two hands, Primary and Secondary (in 0.37.1 the hands
   became the PRI and SEC slots of the left window).
   - Drag a weapon into a hand to take it into the heist. Ctrl+click in the locker sends a weapon
     to its hand; Ctrl+click on a hand sends it back.
@@ -397,8 +636,8 @@ The armory, part 1 of 4: weapons are now something you own and can lose.
 ## What changed in 0.34.0
 
 - **Prices in the market** (Scarface's Market screen, on the left):
-  - A list of **every loot type** a bag can hold (not small loot or vehicles), by name. It
-    scrolls (mouse wheel or the scroll bar). Each row: the name (how many you have in the stash),
+  - A list of **every loot type** a bag can hold (not small loot or vehicles), the dearest
+    today first (0.44.1; the same price: by name). It scrolls (mouse wheel or the scroll bar). Each row: the name (how many you have in the stash),
     **now** (today's price), **real** (the bag's base value in the game) and today's change.
   - Prices are for a Standard bag; your own bags are worth their value (difficulty and quality) x
     the same change.
@@ -1198,7 +1437,7 @@ gets, with or without skills. The skills themselves come in the next releases.
   - `+` refuses what you cannot afford, with the price and your money.
   - The menu shows what your loadout is worth and your money. Each deployable row shows its
     price, and the `+Mag` row shows the next magazine's.
-- **Everything costs money, deployables included.** First aid kit $4,000, doctor bag $12,000,
+- **Everything costs money, deployables included.** First aid kit $4,000, doctor bag $35,000 (0.52.0; was $12,000),
   ammo bag $10,000, body bags $3,000, and so on (`Ammo.PRICES.item`; an item mod can give its
   definition a `price`). Ammunition keeps its 0.18.5 prices.
 - **What a heist uses up is paid again.** The plan comes back every heist, so what you use is
@@ -1668,6 +1907,21 @@ PDTI.Ammo.OnHeistStart()
 PDTI.Loot.Count()                     -- the bags of loot you carry
 PDTI.Loot.Tick()
 
+-- Weapons, parts and build templates
+PDTI.Armory.Weapons()                 -- the weapons you own, with where they are
+PDTI.Armory.Buy(weapon_id)            -- buys one of today's weapons
+PDTI.Armory.TodayPrice(weapon_id)
+PDTI.Parts.ForWeapon(weapon_id)       -- the parts for sale for a weapon
+PDTI.Parts.Buy(weapon_id, part_id)    -- buys a part (it goes into the locker)
+PDTI.Parts.Fit(part_container, part_id, weapon_container, weapon_id)
+PDTI.Parts.TakeOff(weapon_container, weapon_id, part_id)
+PDTI.Parts.ApplyBuild(weapon_container, weapon_id, part_ids)
+PDTI.Templates.All()                  -- the build templates you have
+PDTI.Templates.Save(weapon_data)       -- saves a weapon's build as a template
+PDTI.Templates.Apply(id, container, weapon_id)
+PDTI.Templates.Delete(id)
+PDTI.Templates.Describe(template)
+
 -- Carry weight
 PDTI.Carry.GetSpeedFactor()
 PDTI.Carry.ApplyToState(state)
@@ -1695,6 +1949,10 @@ width and height. Read APIs return detached copies; change inventory only throug
 provided functions.
 
 ## Body health
+
+**Lasting damage (0.48.0):** the parts keep what a heist left them (ended down, in custody or
+left: every part at 0, the head at 1 HP). Heal at home for $15,000: Dallas's menu in the
+safehouse, or the inventory screen's Health tab.
 
 Your health is split into six parts. The game's health is always their sum, so the health ring,
 skills, perks and the other players see it as before. Armour still takes damage first; only
@@ -2066,8 +2324,35 @@ The safehouse (the game's own, with its rooms and coins) is the base of the loot
 - **Your base** (0.30.0): in the safehouse the inventory key opens the menu's whole screen
   (what you bring, rig, backpack, Captured, Stash), and the option "Start in the safehouse"
   takes you there when the game starts and after every job you finish offline.
+- **Duke's Story Line** (0.43.0): talking to Duke offers the game's Story Line first; backing
+  out of it brings you back to the safehouse.
+- **Weapon insurance** (0.45.0): insure a weapon in its view (right-click it) for 30% of its
+  built price; lost, it is back in your locker 10 real minutes after the heist. Duke's room makes
+  it cheaper and faster (0.45.1: tier 2 costs 20%; tier 3 also brings it back in 5 minutes).
+  Houston (0.53.0) sells it too: his room's menu lists your insured and uninsured weapons,
+  with Insure all and a button for each of the 5 dearest uninsured ones.
+- **Weapon condition** (0.47.0): weapons wear per round fired in a heist (rifles 100% -> 50% in
+  2,500 rounds), jam below 50% (up to 1 shot in 10 at 0%; the Clear Jam key racks the gun in
+  1 s), and are repaired in their view at home (20% of the built price from 0%). A worn gun
+  sells for less; the free weapons never wear. Rust (0.50.0) repairs them too: his room's menu
+  lists your worn weapons, with Repair all and a button for each of the 5 most worn.
+- **Weapon skins** (0.49.0): Sydney (her room's menu, **Weapon skins**) puts the skins and
+  colours you own on your weapons, any number of guns per skin, your best copy (StatBoost
+  first). A legendary skin's own parts are free and lock the gun; yours come off. At home only;
+  a skin sold on Steam comes off at the menu.
 
 Planned: a market with daily prices and contracts. The safehouse room bonuses came in 0.31.0.
+
+## Online
+
+PDTI players play only with PDTI players (0.46.0). The game marks every lobby with its build key;
+PDTI adds `_pdti` to it, so PDTI and vanilla lobbies never see each other (the lobby search, the
+friends' list, quickplay and invites all use the key; restoration-mod keeps its players apart the
+same way, and with it PDTI's key goes on top of restoration's). Any PDTI version plays with any
+other. A host also checks every player who joins: PDTI says hello through SuperBLT's networking,
+and a player whose game has not after 15 s (counted while they can talk) is removed with the
+game's kick. A client leaves a lobby whose host never answers; in a heist it only warns. The log
+shows the key: `[PDTI LOBBY] lobby key (NetworkMatchMakingSTEAM): payday2_..._pdti`.
 
 ## Carry weight and speed
 
@@ -2097,7 +2382,8 @@ drag and drop: press on an item, move it and let go over a cell.
 
 ## Not yet implemented
 
-- Multiplayer synchronization and host authority.
+- Multiplayer synchronization and host authority (0.46.0 only keeps PDTI players among
+  themselves).
 - Backpack/rig player models and access animations.
 - Item effects for medical and utility items (the item-use API is there, the effects are
   not).
@@ -2118,16 +2404,17 @@ That runs every suite, each in its own process:
 | Suite | Checks | What it covers |
 |---|---|---|
 | `run_tests.lua` | 21 | the inventory model: rollback on failed saves, save recovery, item use |
-| `ui_tests.lua` | 201 | the weapons market tab (every weapon in a list that scrolls, a row's today / normal / for sale, a click picks it, Buy pays, none left refused with the reason, nothing overlaps, back to Loot), the inventory's Locker tab (its count, the 12x10 locker without the weapon slots, a weapon named in its cell), the weapon slots PRI and SEC in the left window (the free AMCAR a real weapon in PRI, dragged into the backpack at its 4x2 and back onto PRI grabbed by a middle cell, an empty slot named so (no weapon, in either slot); every redraw applying the slots to your hands; a pistol dragged by its second cell: red over PRI, green over SEC as one cell, the SEC box lit; dropped and shown there; the game's secondary following as the screen redraws; dragged off into the backpack at its own size; click and click; a secondary refused on PRI; Ctrl+click on SEC back to the locker and from the locker onto SEC, with the messages; nothing overlaps, no price graph left from the market, it fits 720p), the price list kept by a redraw (not doubled, made again when its rows change, gone when the market closes), the controls kept off while the market is open (turned on by something else: off again, on when it closes), the market's price list (every loot type but vehicles and small loot, it scrolls, a row's now and real), the 7-day graph (7 bars, today last, a click shows another type, nothing overlaps), no market tab in the inventory, the market opened on its own (the inventory's windows empty, Close, the inventory normal after it), the market (offers with Accept, Accept makes a contract, Deliver refused without the bags with the reason, delivered with them, a busy market fits, lines readable), Clover's loot slots drawn next to the medium backpack (every rig, layout clean), the Room bonuses tab (picking, a bonus not made yet, every combination with the biggest bonuses fits 720p), the inventory windows (the bring list in the middle in the menu, its Captured and Stash tabs, the end screen's captured loot window and its S/X keys, two items to a row, the health window in a heist, drawn smaller when the screen is too low) against a fake BeardLib MenuUI, layout, overlap, fit, text that shrinks to fit its box, the re-highlight after a redraw (a second click without moving the mouse) |
-| `hooks_tests.lua` | 27 | the controls kept off every frame while the screen is open, the hook scripts, mod.txt and the heist start |
+| `ui_tests.lua` | 223 | the weapons market tab (0.42.0: a Primary and a Secondary page with their counts, a button per type in order (rifles, shotguns, LMGs, akimbo, special; pistols, SMGs, shotguns), only the types a page has, an LMG the game also calls an SMG with the LMGs, akimbo named first or second with the akimbo, a type's list alone with its name and count, the pick following the page and type, a new page on its first type; a type's list scrolls, a row's today / normal / for sale, a click picks it, Buy pays, none left refused with the reason, nothing overlaps, back to Loot), the inventory's Locker tab (its count, the 12x20 locker with 8 rows shown without the weapon slots, a weapon named in its cell; 0.51.0: the rows line, Down and Up, drawn in the same place, not past the end or before the start, the mouse wheel over it (taken), while dragging (the preview again), not over the locker or no cell (left to the game), no wheel without the game's ids), the weapon slots PRI and SEC in the left window (the free AMCAR a real weapon in PRI, dragged into the backpack at its 4x2 and back onto PRI grabbed by a middle cell, an empty slot named so (no weapon, in either slot); every redraw applying the slots to your hands; a pistol dragged by its second cell: red over PRI, green over SEC as one cell, the SEC box lit; dropped and shown there; the game's secondary following as the screen redraws; dragged off into the backpack at its own size; click and click; a secondary refused on PRI; Ctrl+click on SEC back to the locker and from the locker onto SEC, with the messages; nothing overlaps, no price graph left from the market, it fits 720p), the price list kept by a redraw (not doubled, made again when its rows change, gone when the market closes), the controls kept off while the market is open (turned on by something else: off again, on when it closes), the market's price list (every loot type but vehicles and small loot, it scrolls, a row's now and real), the 7-day graph (7 bars, today last, a click shows another type, nothing overlaps), no market tab in the inventory, the market opened on its own (the inventory's windows empty, Close, the inventory normal after it), the market (offers with Accept, Accept makes a contract, Deliver refused without the bags with the reason, delivered with them, a busy market fits, lines readable), Clover's loot slots drawn next to the medium backpack (every rig, layout clean), the Room bonuses tab (picking, a bonus not made yet, every combination with the biggest bonuses fits 720p), the inventory windows (the bring list in the middle in the menu, its Captured and Stash tabs, the end screen's captured loot window and its S/X keys, two items to a row, the health window in a heist, drawn smaller when the screen is too low) against a fake BeardLib MenuUI, layout, overlap, fit, text that shrinks to fit its box, the re-highlight after a redraw (a second click without moving the mouse); 0.44.1: the price list dearest first, the graph on the first row |
+| `hooks_tests.lua` | 28 | the controls kept off every frame while the screen is open, the hook scripts, mod.txt and the heist start; 0.45.0: the insurance looks every frame (the safehouse), not while paused |
 | `ammo_tests.lua` | 49 | the ammunition system against a fake game: supply, reload, pickup, ammo bag, packing |
 | `install_tests.lua` | 16 | the hooks go in when the game loads its weapon classes late |
 | `loot_tests.lua` | 32 | the loot bags that follow the game's carry, nothing asked in the menu |
-| `safehouse_tests.lua` | 189 | the armory looks at the main menu (a heist left unfinished), the start dialog of the mod's own save is asked for there, the weapons follow the slots once per player unit (the heist begins, after custody), Scarface's room menu has Market (opens the market; no other room; not with the loot system off), the laptop (exit_to_crimenet: to crime.net marked for the way back, the game's exit not run, offline only, not in a heist, the way out failing, every other object logged once), the Contract Broker trip (opened on crime.net after half a second, not again after backing out, no time limit, home from the first page, the option off, crime.net opened once if it does not come, then told once, a dialog first, a long dialog, the broker not opening), the safehouse as your base: it is the menu there (saved, the whole screen, no restock), the heist systems leave the inventory alone (ammunition, loot, deployables, plates), the way there at game start and after an offline job (at once, under a black screen that a dialog takes away, and every case where you stay in the menu), the safehouse's briefing passed for you (only on the mod's trips, offline, with the option on), the hooks on the main menu, the briefing and the end screen, the armory opening the inventory screen (the game's weapon menu when it cannot open, and in the raid), a waiting raid offered first (Defend offline, Ignore on to the safehouse, Back, the game's own menus untouched), the rooms' menus on the heisters (the heister-to-room mapping, Upgrade with the game's purchase and a save, not enough coins, the top tier, Wolf's Open inventory on the next frame, the daily side job and its hint, the raid, no data, the list of heisters), Chains' room (its zone around Chains, not Wolf's floor below, interact at nothing leaves for the menu inventory, at something, outside or with the screen open is the game's, the hint once per entry, his usual spot when he is not found), the menu inventory trip (not in the menu's first frame, the page opens, no time limit inside it even with a dialog, a page that does not open: tried again once, then you stay and are told once, back to the safehouse from the first page, with the option off, a dialog first, the page or the way out failing), the weapon racks being the game's, the arrival hint, the probe |
-| `market_tests.lua` | 81 | mission items and loot the escape does not secure left out of the price list, encoded bag values (the game's get_value first), the default value for loot without one, people and entries without a bag type left out, the price list (base values, by name, small loot and vehicles left out, now with today's change, stashed counts, one row for two ids of one name), the 7-day history (dates, past drift, sales of past days from the log, today live also without a log), the sales log (kept 20 days, saved, bad entries dropped), day numbers, the drift (+-20%, the same all day, changing by day and type), saturation (-8% a sale, +4% a day, never below 40%), sell and sell-now at the market price, offers (3 a day, the same all day, a month of them keep to their level), accept (leaves the offers, not twice, due date, a fourth refused, a new day refills, run-out contracts dropped), deliver (refused with the count, quality and type checked, the cheapest bags, pays value x multiplier, coins, done), the High roll (used on the next Standard pickup only), save and load, bad data made safe, Ethan & Hila (4 offers, the featured type +25%) |
+| `safehouse_tests.lua` | 203 | the armory looks at the main menu (a heist left unfinished), the start dialog of the mod's own save is asked for there, the weapons follow the slots once per player unit (the heist begins, after custody), Scarface's room menu has Market (opens the market; no other room; not with the loot system off), Duke's room menu has Story Line first and picked (before Upgrade and Close; leaves the game's way, marked for the way back; no other room; not online), the Story Line trip (planned on the way back, not in the first frame, the story_missions page opened offline, no trip or time limit on it or a heist's contract, home from the first page, the page not opening: tried twice then told, the page failing, with the option off), the laptop (exit_to_crimenet: to crime.net marked for the way back, the game's exit not run, offline only, not in a heist, the way out failing, every other object logged once), the Contract Broker trip (opened on crime.net after half a second, not again after backing out, no time limit, home from the first page, the option off, crime.net opened once if it does not come, then told once, a dialog first, a long dialog, the broker not opening), the safehouse as your base: it is the menu there (saved, the whole screen, no restock), the heist systems leave the inventory alone (ammunition, loot, deployables, plates), the way there at game start and after an offline job (at once, under a black screen that a dialog takes away, and every case where you stay in the menu), the safehouse's briefing passed for you (only on the mod's trips, offline, with the option on), the hooks on the main menu, the briefing and the end screen, the armory opening the inventory screen (the game's weapon menu when it cannot open, and in the raid), a waiting raid offered first (Defend offline, Ignore on to the safehouse, Back, the game's own menus untouched), the rooms' menus on the heisters (the heister-to-room mapping, Upgrade with the game's purchase and a save, not enough coins, the top tier, Wolf's Open inventory on the next frame, the daily side job and its hint, the raid, no data, the list of heisters), Chains' room (its zone around Chains, not Wolf's floor below, interact at nothing leaves for the menu inventory, at something, outside or with the screen open is the game's, the hint once per entry, his usual spot when he is not found), the menu inventory trip (not in the menu's first frame, the page opens, no time limit inside it even with a dialog, a page that does not open: tried again once, then you stay and are told once, back to the safehouse from the first page, with the option off, a dialog first, the page or the way out failing), the weapon racks being the game's, the arrival hint, the probe; 0.45.0: the menu's update looks at the insurance every frame, also with no trip waiting |
+| `market_tests.lua` | 84 | mission items and loot the escape does not secure left out of the price list, encoded bag values (the game's get_value first), the default value for loot without one, people and entries without a bag type left out, the price list (base values, dearest today first since 0.44.1 (today's price, not the real one; the same price by name), small loot and vehicles left out, now with today's change, stashed counts, one row for two ids of one name), the 7-day history (dates, past drift, sales of past days from the log, today live also without a log), the sales log (kept 20 days, saved, bad entries dropped), day numbers, the drift (+-20%, the same all day, changing by day and type), saturation (-8% a sale, +4% a day, never below 40%), sell and sell-now at the market price, offers (3 a day, the same all day, a month of them keep to their level), accept (leaves the offers, not twice, due date, a fourth refused, a new day refills, run-out contracts dropped), deliver (refused with the count, quality and type checked, the cheapest bags, pays value x multiplier, coins, done), the High roll (used on the next Standard pickup only), save and load, bad data made safe, Ethan & Hila (4 offers, the featured type +25%) |
 | `armory_tests.lua` | 177 | the weapons catalog (unlocked only, not enemies', primaries first), today's price (+-30%, the 5/7 example), the daily stock (0-3, a new day, none left), buying (a weapon item in the locker as the game builds it, its size and weight, paid, no money, locked, in a heist, a full locker refused before paying), the free AMCAR and Chimano 88 given as real items when you own none of a kind (marked free, dragged off into the backpack, no second one while you own one, the game still gets an AMCAR for an empty slot, again after a death or a left heist, not after you threw your own away (noted in the file; an older file owes none), never in a heist or with restoration-mod, not when the game does not know the weapon, their numbers saved), in a heist (the locker stays at home, a slot's weapon to the backpack and back, the last weapon may leave your hands too, the loadout's weapon is the slot's item and an empty slot weighs nothing so a packed weapon counts once; in the menu a slot may be emptied), the player's hands following the slots (nothing to change, a weapon taken out removed and deleted with its HUD ammo cleared, its magazine out of its magazine slot and the other weapon held, one put back added holstered with its blueprint, an empty SEC at spawn, both empty: no weapon in your hands (the pistol kept as a hidden, empty stand-in that Pick Up Weapons will not drop, its magazine out of the slot, nothing more the next time, gone when a weapon goes into a slot, the safehouse too, a real Chimano 88 not taken for it, a Chimano 88 stand-in when only a primary is left, else the primary), additions before removals; with the stand-in in hand no firing, reloading, fire mode, gadget, inspecting, bipod, underbarrel or aiming (aiming ends), melee still works, kept hidden after the game's update, no ammunition from boxes or bags, a weapon already gone not read, a real weapon unchanged; a rifle picked up with no weapon in your hands replaces the stand-in at once, a weapon the game cannot spawn leaves the one you hold, no player), weapons packed on the briefing screen counted when the heist fails or is left, picked-up weapons with Pick Up Weapons (the hook put in place at spawn, nothing changed without that mod's data or outside a heist or with no grid weapons, an enemy's weapon becomes the slot's weapon even if not unlocked with the parts the game built or its default parts, yours left on the ground and given back as the same item when picked up again, two of one model told apart by their parts or by their kind, an enemy's weapon of your model is a new one, an enemy's weapon swapped for another is gone, a slot's weapon that was not in your hands is not lost, the screen redrawn, the factory it was built with, the weapon replaced never touched once the game deleted it nor one already gone; won: what you carry is yours once, in its slot or the locker, not unlocked or packed to the locker, already there not added twice, no room waits, kept in the file; what you left on the ground is lost; failed or left: nothing picked up kept), a 4x2 rifle taking the one cell of a weapon slot and its own 4x2 again in the locker, the sizes by class (the minigun 5x2), the armory file (today's purchases, broken data made safe, unreadable), the file names on the mod's own save, the hands (a primary only in the primary hand, one weapon to a hand, a locked weapon refused, not checked while reading the save), the game's slots following the hands (the defaults when empty, slot 1 only, the menu scene and outfit told, nothing written when nothing changed, a slot not equipped or another weapon or factory written again, again after the game reads its save, not in a heist where not even the plan is read), in a heist the locker and hands do not change and weigh nothing, a packed weapon weighs, Ctrl+click to its hand and back, death (the weapons brought, won keeps all, failed is noted and taken out at the menu, the locker kept, the defaults again, a left heist, the safehouse), a build's price, the game's weapon screen (no buying, modding or selling weapons, a mask still sells), no restart (the menu, the votes, the fail screen leaves the job), the magazine in a weapon goes with it (a new weapon's full one in its box, into the locker and back the same magazine and weight, another weapon's own, another kind's refused, no weapon no magazine, taken out by hand stays out and is no weapon's, put back is its own, two of one model each its own, thrown away gone with it, an older save's box magazines into their weapons), in a heist each unit knows its item (read before the game deletes it, the same model swapped, loaded from its own item, read when taken out and before it becomes the stand-in, the stand-in never again) |
-| `parts_tests.lua` | 189 | weapon parts as grid items: the market's list for a weapon (not its own parts, not a DLC part you don't own but one you do, not hidden, achievement, never-dropping or ammunition parts, not an assault rifle's magazine parts but a pistol's, by type then price), a part's price (the game's for that weapon, infamous dearer, each part's own change of the day), its size and weight by type, Buy (into the locker, paid, refused: not for sale, no money, in a heist, a full locker before paying, paid back if it could not be put in); fitting (onto the AMCAR in PRI and its game slot, the old sight off into the locker, the weapon's own part just goes, a skin's part just goes, not a part it does not take, not one it has, a forbidden grip comes off, then the stock blocks it, heavier with a tactical stock, no room: nothing changes, in a heist a sight but not a magazine, a locker weapon's slot unchanged, a pistol's extended magazine resizes the magazine it keeps); taking off (its own part comes back, a laser just comes off, not its own part, not one it lacks, not a skin's, no room, off a backpack weapon stays in the backpack); selling (not a free weapon, half of today's price with its parts, a part half, nothing in a heist, its magazine paid back, from your hands its box magazine too and the game slot follows); death (carried parts lost, the locker's kept, a win keeps them); the screen (a part over PRI lights it, red over SEC with the reason, the drop fits, a locker weapon lights whole, refused with the part named, a part over a part is no fit, Inspect not for other items or in a heist, which weapons a part fits, a part's cell label, Shift+click Inspect without picking up, a held item let go, Close, Take off, Sell twice, a free weapon's and a skin's part, a press with Shift, a part's Inspect, the market's parts list, Buy part, the list gone on the Loot tab); the weapon view (0.38.1: slot names, every part on it in the slots' order with the rest by slot name, its free slots in that order, the CAR-4 with only its own, weight and concealment, a fitted part first with Take off, no free slot left, the count, the AMCAR's parts with a named standard one marked and a skin's part kept on, none with Take off, a 22-part weapon fits 720p, a right click on a weapon and on a part opens their views, anything else, outside the cells and while dragging left alone, the left button still picks up); the slots (0.38.2: a slot per part and an empty one per kind for sale in order, an empty slot sorted against itself, off onto a cell turned, said so, not onto a taken cell, the pockets or a weapon slot, another part that comes off goes next to the weapon, no room for it: nothing comes off; the slot drag: a press drags your part out, the status, a green preview with its size, turned, red on a taken cell and the pockets, let go outside, in the window or on a slot it stays on, on a taken cell it stays on with why, on a free cell it comes off there, not the weapon's own, not an empty slot, not a gone weapon; a part over its slot green, over another red with where it goes, a gone weapon's slot nothing, let go there it stays, on its slot fitted, a blocked one red with the blocker, not a part red; Ctrl+click off next to the weapon, not the weapon's own, not an empty slot, not while holding or dragging; picking up ends a slot drag and the other way round, closing ends it; the screen: the CAR-4's boxes, no Take off, the help, three a row, colours, the count, a plain click says how, Ctrl+click off, the view says so, a press drags out with the box lifted, let go on a locker cell, the slot lit green and another red, let go on its slot fitted, Ctrl+press off, a right press left alone, the weapon's own not dragged, the middle window is the inventory, the mouse over a box finds its slot, the AMCAR's 9 slots, an empty slot darker, a 22-part weapon's 25 slots fit 720p); the gun in your hands (0.38.3: in the safehouse the guns made at spawn are kept and learn their builds, a sight fitted to the AMCAR in PRI makes the gun again with it at once, it knows its build, nothing again, taken off it is made again with its own sight, the pistol never made again, a locker weapon's change makes nothing again, in a heist a gun this mod made with another build is made again, one the game made is taken as it is) |
-| `pictures_tests.lua` | 87 | pictures (0.40.0; names on pictures off in 0.40.1: on by default, the AMCAR and a part in the grid picture alone, PRI the picture alone at full strength, a bandage and the Chimano keep their names, the weapon view keeps its text, saved with the others): the paths (a weapon's from the game's function, none for one the game lacks, looked up once and said once in the log, a part's from its DLC's folder or the game's own, none for an unknown part, an item's, nothing else's, on by default, the setting off, no DB or a failing game function: none); the loading (no loader: at once, asked once, drawn when it came, one the game had at once, a failing loader at once, given back with each index, asked again after); the geometry (a 4x2 rifle: 8 pieces in their cells and the picture, the shape kept, centred, following on past the gaps, from edge to edge; turned: the whole picture in each cell, turned, one centre, its unturned size; one cell; a square on a 4x1 item only in the middle cells; no size: nothing); the screen (not drawn before the pictures came, one redraw for all, an AMCAR in the locker across all its cells over the colour and under the text, its name top-left, PRI whole and centred, faint under the centred text, the windows keep no size probe, the Chimano with none the old look, a bandage none, a DLC part's; the drop preview above it, a picture that comes while dragging waits; each size read once, one the game had drawn at once with no redraw more, a redraw dropped while closed does not block the next; turned in the locker, the pieces meeting; the weapon view's picture under the name, 72 high and centred, the laser's slot box after it came, on the right and the text clear of it, a standard part's and an empty box none; a part's view; the Chimano's view no gap; 22 parts with the picture fit 720p; closing: the pictures go, then every texture back, the next opening asks again; the market's picked weapon, none for the Chimano with no gap; the setting off: none anywhere, nor in the market; saved with the others; no undocumented MenuUI parameters) |
+| `parts_tests.lua` | 212 | weapon parts as grid items: the market's list for a weapon (not its own parts, not a DLC part you don't own but one you do, not hidden, achievement, never-dropping or ammunition parts, not an assault rifle's magazine parts but a pistol's, by type then price), a part's price (the game's for that weapon, infamous dearer, each part's own change of the day), its size and weight by type, Buy (into the locker, paid, refused: not for sale, no money, in a heist, a full locker before paying, paid back if it could not be put in); fitting (onto the AMCAR in PRI and its game slot, the old sight off into the locker, the weapon's own part just goes, a skin's part just goes, not a part it does not take, not one it has, a forbidden grip comes off, then the stock blocks it, heavier with a tactical stock, no room: nothing changes, in a heist a sight but not a magazine, a locker weapon's slot unchanged, a pistol's extended magazine resizes the magazine it keeps); taking off (its own part comes back, a laser just comes off, not its own part, not one it lacks, not a skin's, no room, off a backpack weapon stays in the backpack); selling (not a free weapon, half of today's price with its parts, a part half, nothing in a heist, its magazine paid back, from your hands its box magazine too and the game slot follows); death (carried parts lost, the locker's kept, a win keeps them); the screen (a part over PRI lights it, red over SEC with the reason, the drop fits, a locker weapon lights whole, refused with the part named, a part over a part is no fit, Inspect not for other items or in a heist, which weapons a part fits, a part's cell label, Shift+click Inspect without picking up, a held item let go, Close, Take off, Sell twice, a free weapon's and a skin's part, a press with Shift, a part's Inspect, the market's parts list, Buy part, the list gone on the Loot tab); the weapon view (0.38.1: slot names, every part on it in the slots' order with the rest by slot name, its free slots in that order, the CAR-4 with only its own, weight and concealment, a fitted part first with Take off, no free slot left, the count, the AMCAR's parts with a named standard one marked and a skin's part kept on, none with Take off, a 22-part weapon fits 720p, a right click on a weapon and on a part opens their views, anything else, outside the cells and while dragging left alone, the left button still picks up); the slots (0.38.2: a slot per part and an empty one per kind for sale in order, an empty slot sorted against itself, off onto a cell turned, said so, not onto a taken cell, the pockets or a weapon slot, another part that comes off goes next to the weapon, no room for it: nothing comes off; the slot drag: a press drags your part out, the status, a green preview with its size, turned, red on a taken cell and the pockets, let go outside, in the window or on a slot it stays on, on a taken cell it stays on with why, on a free cell it comes off there, not the weapon's own, not an empty slot, not a gone weapon; a part over its slot green, over another red with where it goes, a gone weapon's slot nothing, let go there it stays, on its slot fitted, a blocked one red with the blocker, not a part red; Ctrl+click off next to the weapon, not the weapon's own, not an empty slot, not while holding or dragging; picking up ends a slot drag and the other way round, closing ends it; the screen: the CAR-4's boxes, no Take off, the help, three a row, colours, the count, a plain click says how, Ctrl+click off, the view says so, a press drags out with the box lifted, let go on a locker cell, the slot lit green and another red, let go on its slot fitted, Ctrl+press off, a right press left alone, the weapon's own not dragged, the middle window is the inventory, the mouse over a box finds its slot, the AMCAR's 9 slots, an empty slot darker, a 22-part weapon's 25 slots fit 720p); the gun in your hands (0.38.3: in the safehouse the guns made at spawn are kept and learn their builds, a sight fitted to the AMCAR in PRI makes the gun again with it at once, it knows its build, nothing again, taken off it is made again with its own sight, the pistol never made again, a locker weapon's change makes nothing again, in a heist a gun this mod made with another build is made again, one the game made is taken as it is); 0.44.0: a dragged part marks green the weapons that take it (PRI and the locker, every cell of each, not one that does not take it; marked once while the mouse moves; gone when let go; one with a part of its kind on still marked; nothing for an item that is not a part), the game's own mods into the locker (none on the game's own save, said once; none in a heist; each its own item with its global value and uid; gone from the game's inventory; ammunition, no part or no black market entry stay; the progress saved once and told; nothing twice; a new drop at the next menu; a full locker: they wait and you are told; a small place takes a sight while a grip waits; refused after leaving the game's inventory: given back) |
+| `pictures_tests.lua` | 88 | pictures (0.40.0; names on pictures off in 0.40.1: on by default, the AMCAR and a part in the grid picture alone, PRI the picture alone at full strength, a bandage and the Chimano keep their names, the weapon view keeps its text, saved with the others): the paths (a weapon's from the game's function, none for one the game lacks, looked up once and said once in the log, a part's from its DLC's folder or the game's own, none for an unknown part, an item's, nothing else's, on by default, the setting off, no DB or a failing game function: none); the loading (no loader: at once, asked once, drawn when it came, one the game had at once, a failing loader at once, given back with each index, asked again after); the geometry (a 4x2 rifle: 8 pieces in their cells and the picture, the shape kept, centred, following on past the gaps, from edge to edge; turned: the whole picture in each cell, turned, one centre, its unturned size; one cell; a square on a 4x1 item only in the middle cells; no size: nothing); the screen (not drawn before the pictures came, one redraw for all, an AMCAR in the locker across all its cells over the colour and under the text, its name top-left, PRI whole and centred, faint under the centred text, the windows keep no size probe, the Chimano with none the old look, a bandage none, a DLC part's; the drop preview above it, a picture that comes while dragging waits; each size read once, one the game had drawn at once with no redraw more, a redraw dropped while closed does not block the next; turned in the locker, the pieces meeting; the weapon view's picture in the middle of its slots, 120 high and centred, the laser's slot box after it came, its picture in the box, a standard part's and an empty box none; a part's view; the Chimano's view no gap; 22 parts with the picture fit 720p; closing: the pictures go, then every texture back, the next opening asks again; the market's picked weapon, none for the Chimano (on the Secondary page) with no gap, the page kept when the market opens again; the setting off: none anywhere, nor in the market; saved with the others; no undocumented MenuUI parameters) |
+| `template_tests.lua` | 46 | gun build templates (0.41.0): saving a build (named after the weapon, numbered, the weapon's own parts left out, none without parts), applying it (the parts you own and the weapon takes, the parts that come off as items, what is left out and why), deleting, the file per profile (a broken one ignored), at home only, the weapon view's Save, Apply and Del |
 | `hotmod_tests.lua` | 112 | hot modding (0.39.0): the times by part; at home (the menu and the safehouse at once, the gun in your hands made again, no note); in a heist (what you carry noted at the spawn with the builds, a sight 3 s and what stops it said, nothing changes before, one change at a time and nothing off meanwhile, a third of the way, done: on, its item gone, the gun made again, the status; no magazine on or off, nothing from or onto a locker weapon, nothing sold; stopped by shooting and switching, not by moving, carrying, an unknown state or a click with the screen open, stopped by going down and none starts down, on or off; before the mask is on it goes on; the screen redrawn each second, not while dragging; off onto a taken cell refused, nothing into the locker, a free cell, its cell taken meanwhile next to the weapon, a cell turned; off with no cell next to the weapon never the locker; a part moved meanwhile still fitted, thrown away not, a packed weapon modded, a weapon thrown away nothing off); death (failed: the weapon, a part fitted there and one thrown away lost, the locker kept, nothing noted; a part taken off there no item; a left heist); a win (noted: the build, what is gone, the part taken off; at the menu the build, its weight, the item gone, the part where it was, the laser lost, the rest as it was, the game's weapon, nothing left, a new uid above; no room: the locker, else it waits in the file and comes the next menu; the next day of a heist begins with it and notes anew, then lost; a respawn keeps the first note; no spawn: nothing; nothing to do: nothing written; a part already there not twice; a crash's note replaced; the file's broken entries left out, a new uid above a waiting part's); the screen in a heist (no middle window, the health window, a right click opens the view and the health window steps aside, no Sell, the heist line, the magazine "(at home)", a part dropped on the weapon goes on in time, the slot's percentage, another part waits over the weapon and stays, a slot of yours not dragged out and an empty slot waits meanwhile, Ctrl+click off in time, a part on its slot in time, a slot dragged onto a cell in time, another weapon's view does not show the change, closed: the health window back, the locker not looked into, the weapon looked at gone: no market) |
 | `save_slot_tests.lua` | 19 | the mod's own save (slot 86 for progress and its backup on Windows, the settings slot kept, once per load, the game's own slot elsewhere), the start dialog (only on the mod's save, once, level 100 the game's way one level at a time, 120 coins, both monies, the game saves, written down; start fresh; a save already played or infamous; progress not read yet; a failing level-up) |
 | `stash_tests.lua` | 58 | a mixed stack captured bag by bag with its own quality, the stash: the end screen waits for the choice (and does not when the window cannot open), a won job captures secured and inventory bags (not small loot or vehicles), custody, a lost job, days of a job, the game pays nothing for bags, stash or sell now at 50%, sell from the stash, 12 bags of room, Compact and Stackable space, the file |
@@ -2144,7 +2431,7 @@ That runs every suite, each in its own process:
 | `gun_slot_tests.lua` | 80 | the magazine in the gun in the weapon's slot: out, in, reloads, akimbo halves, a weapon swapped in the heist (its own magazine in the slot, the old gun's gone with it, the same model again, a shell-by-shell shotgun none, the gun's own kept; the armory's stand-in is no gun to it), the screen, the gun's magazine going with its weapon (read with its rounds and weight, put back the same and no free rounds, size and bullets, emptied stays empty, never settled keeps the game's, not loaded twice, the chamber, a shotgun's shells, akimbo both and one, at most two, only the gun's own kind in its box, labels by weapon, a heist's chosen ammunition first, your weapon at the start emptied or holding one) |
 | `recoil_tests.lua` | 14 | AP recoil: x1.5 per shot, the full-auto build-up and its x2.4 cap, a pause resets it, fast taps count, the rate of fire, mixed magazines, other bullets and weapons untouched |
 | `hook_chain_tests.lua` | 8 | two parts of the mod on one game function: no re-wrapping over 100 frames, recoil applied once per part, re-wrapped once after another mod replaces it |
-| `bag_price_tests.lua` | 57 | boxes give standard rounds only, bags refill magazines with their own bullets and add new ones of the menu choice, nearly empty bags, prices by size and bullet, `+` pays and `-` pays back (never more than paid), deployable prices, refused without money, the restock of rounds, items and throwables used (capped by the plan), the menu lines |
+| `bag_price_tests.lua` | 58 | boxes give standard rounds only, bags refill magazines with their own bullets and add new ones of the menu choice, nearly empty bags, prices by size and bullet, `+` pays and `-` pays back (never more than paid), deployable prices, refused without money, the restock of rounds, items and throwables used (capped by the plan), the menu lines; 0.52.0: the doctor bag at $35,000 |
 | `ammo_conservation_tests.lua` | 13 | 40 random heists (rifle, akimbo SMGs): special rounds never appear out of nowhere; old vs new load helpers on 400 random loads; the gun slot follows the gun |
 | `armour_tests.lua` | 49 | light armour as the game, heavy armour: no regeneration once broken, no refill on revive, perks still give armour, broken-vest reduction per vest (head exempt, spread hits, AP through the last armour), plates (refusals, cancel by firing, 3 s, one used, speed 0.6), the setting off, the colour thresholds, no false "broken" when the vest reads 0 before it was filled or has no armour |
 | `body_tests.lua` | 60 | health per body part: where hits land, black parts and the 75% spill to the torso, head down and revive at 1 HP, first aid kit vs medic bag, heals to the most hurt part first (one part at a time, also with a black part), arm/leg/body effects, deadly falls, Frenzy, turned off, the open screen refreshed on a hit |
@@ -2158,16 +2445,22 @@ That runs every suite, each in its own process:
 | `bag_box_tests.lua` | 23 | restoration-mod's ammo bag and box code: a bag never gains uses (shells above the game's maximum, again and again), what it gives below it, the ammo ratio; boxes up to two stacks per weapon, both full: the box stays (even with grenades to fill), throwables and arrows left to the game, boxes again after shooting, every bullet kind counted |
 | `core_rules_tests.lua` | 37 | the skill rework's core rules: a black part's damage at 75% to the torso, with a black torso to the head (hits on the torso too), down when the head is gone, explosions; first aid kits never heal black parts; ECM durations halved once, not with restoration-mod; 1 concealment point per 3 kg over 15 kg through the game's visibility modifier, not twice, off with the weight penalty; boxes at two stacks; deployable quantity upgrades ignored; 0.22.1: vanilla only, a failed weight read keeps the last penalty, the menu's detection meter redrawn, the throwable count not asked for while the player spawns |
 | `medic_tests.lua` | 83 | the skill frame (switched-off upgrades, restoration-mod and body parts off keep the game's skills, the texts) and the Medic branch: Combat Medic head on revive and reviving (not freeing, not someone else's), Quick Fix deploy only with broken armour (light, heavy until a plate), overheal (kept, capped, lost first, only from a kit, gone next heist), Painkillers 50% spill and 40 s suspension (not the head), Uppers stack and the auto-revive head, the Combat Doctor buff (count, duration, groups, one or both limbs, basic values, replaced not stacked, ends, every effect) |
-| `ammo_specialist_tests.lua` | 110 | the Ammo Specialist branch: two wraps of one function, upgrade levels (the bag's +2 uses, no Bulletstorm window), Scavenger ranges, bag timer and reload, Hot Swap, Clean Swap (your bag only, within 3 m, with ammo; the next magazine taken first), Spoils (the 10th special, snipers and cops not counted, every item, Trophy, no room, teammates, loose rounds without an AR/SMG), the one-use bag (host and client), Reserve Charge, R8, Speed Loader (composed with fast hands, tubes, Auto-load: 3 kills of one shot, an HE blast, the window), the pouch (loose rounds only, filled first, packing from it in hand, emptied without the skill), ammo off and restoration-mod keep the game's skills |
+| `ammo_specialist_tests.lua` | 113 | the Ammo Specialist branch: two wraps of one function, upgrade levels (the bag's +2 uses, no Bulletstorm window), Scavenger ranges, bag timer and reload, Hot Swap, Clean Swap (your bag only, within 3 m, with ammo; the next magazine taken first), Spoils (the 10th special, snipers and cops not counted, every item, Trophy, no room, teammates, loose rounds without an AR/SMG), the one-use bag (host and client), Reserve Charge, R8, Speed Loader (composed with fast hands, tubes, Auto-load: 3 kills of one shot, an HE blast, the window), the pouch (loose rounds only, filled first, packing from it in hand, emptied without the skill), ammo off and restoration-mod keep the game's skills; 0.44.0: the first refused box of a heist says why (which skill), once a heist |
+| `unarmed_box_tests.lua` | 19 | 0.44.0: into a heist with no weapon (the stand-in): a box stays and the log says why, once, a box read once; an enemy's Compact-5 picked up (Pick Up Weapons): in your hands, managed, boxes give it loose rounds; then a CAR-4: boxes give the gun in hand rounds; Bulletstorm: the box stays and the hint says why; a gun at the box limit: not logged; the reason for each gun (room and pickup, not the player's, no gun) |
+| `insurance_tests.lua` | 106 | 0.45.0: insuring (30% of the weapon and its parts, paid, told; for its build; not twice, not a free weapon, only weapons, not without the money, not in a heist; kept; broken entries dropped), a failed heist (both gone at the menu, the insured one due 10 min after the heist ended, not at the menu's time; the clock-time line; the uninsured lost; not at 9:59, at 10:00 in the locker with the insured build, a new uid, no magazine; used up; the hint; saved; the next uid its own), an abandoned heist, left on the ground and thrown away in a won heist (once), a win keeps it and a later loss still claims, a full locker (waits, said, logged once, comes with room), due in a heist (home first), the safehouse tick (once a second), cancelled and paid back (a part fitted or taken off at home with the note and new price, Cancel, sold with the text, thrown away at home within a second and at the menu, a weapon a win lost not swept, the same build kept, a build changed another way swept with the note), a template applied, a part fitted in a heist (insured there, cancelled at home after the win), lost with another build (the price back), the briefing (nothing comes), the screen (the mark in PRI and on the locker item's top-right cell only, insured line and Cancel, paid back and said, Insure, a click insures, a free weapon's line, the note after a change, 22 parts insured fits 720p, the Locker tab and the market's Weapons tab lines, redrawn when it comes, documented MenuUI parameters), Duke (0.45.1: tier 2 20% and still 10 min, paid so; tier 3 still 20% and back in 5 min; seconds); Houston (0.53.0): the lists (free weapons in neither, uninsured dearest first not by name or order owned, insured by name), Insure all (nothing to insure, not in a heist, short of money: nothing and the total, one payment, every weapon, said, logged, saved, the build kept), one insured alone written at once, his menu (none insured, the uninsured named with "and N more", Insure all with the total, 5 buttons dearest first, the room's own lines, a button insures with the hint, the insured named, a weapon on its way back, Insure all from the menu, all insured: no buttons, not in another room, the armory off) |
+| `wear_tests.lua` | 119 | 0.47.0: rounds to 50% per class (rifles 2,500, pistols, akimbo pistols and snipers 3,500, LMGs 1,500, the minigun 1,000, others 2,500), the jam chance (none at 50% and above, 1 in 20 at 25%, 1 in 10 at 0%, clamped) and its text, a missing or broken condition is 100%, a free weapon always 100%; wearing (nothing at the menu or in the safehouse, 100 rifle rounds 2%, the first shot writes the file and the next 30 s wait, a shot the game did not fire, the free Chimano, a gun not yours, an akimbo second gun wears its pair; on the weapon at the menu after a win and after loading, the heist's memory emptied; quit in a heist; failed and insured: back at the condition lost; the next day goes on from the wear written); the file (wear by uid clamped, nonsense dropped; captured and returning weapons keep it; on disk; a flush with nothing new; Apply not final keeps a weapon to come, final drops it); jams (never at 50% or above, the roll below, the automatic fire stops, the hint names the key even right after another, written at once; may not start shooting, another gun may; the trigger clicks once and the hint, the game's own check still runs; an akimbo second gun stops the pair; not twice; none at home or the next day; the 2 s between hints); Clear Jam (starts, not twice, half a second, 1 s clears and it shoots, a fine gun is said, switching weapons or reloading stops it and says so at once); the lookups cached per uid (none per shot); the game's fire result passed on; repair (none needed when new, 10% of the built price at 50%, 20% at 0%, not in a heist, not without the money, paid and 100%, not a free weapon, no such weapon, the armory off: no repair and no wear); a gun at 0% sells for half; the screen (no bar at 100%, the bar in PRI as long as the condition, not on the free Chimano, on the locker item's first cell only, the condition line and Repair button, fits 720p, a click repairs, then no button, a free weapon's view has neither, documented MenuUI parameters); Rust (0.50.0): the worn list (worst first, then by name, free and full ones out, condition and price), Repair all (not in a heist, short of money: nothing and the total, one payment, every weapon 100%, said and logged, armory off), his menu (nothing worn: said, no buttons; the worn line, 5 named and "and N more"; Repair all with the total; 5 weapon buttons worst first; the room's own lines; a weapon's button repairs it with the hint; Repair all from the menu; not in another room; the armory off) |
+| `lasting_tests.lua` | 57 | 0.48.0: a new save full and not hurt; standing at the end the parts are kept (a black leg, the body's spill, logged) and saved; the menu shows them (no owner), the summary; the next heist starts with them (black stays black, the game's health is their sum); back from custody in the heist a fresh body, ended standing so full again; ended in custody: every part 0, the head 1 HP, logged, the next heist so; ended bleeding out unhurt: the same; a black head at the end counts as down; in a heist the file is marked (written); a heist left: down (written), logged; the next day of a heist goes on; a saved black head starts at 1 HP; a skill's black part (Frenzy) and the carried damage both; the safehouse (shows the damage, not marked, its end saves nothing, the screen never overwrites a live body); Dallas's menu (Heal everything at $15,000, what is hurt, not in another room, healed: paid, every part and your character full, the hint, written; not hurt: no button, said; not enough money; not in a heist); the file (clamped, nonsense full, nothing: full; its name, own save or old style); off: nothing; the menu's Health tab (marked hurt, the figure, the button under it, the line, fits 720p, no health window at home, a click heals, paid, said, then not hurt and no button, documented MenuUI parameters) |
+| `skins_tests.lua` | 83 | 0.49.0: what you own (the AMCAR's skins by name, one row each: the unlockable and an unlocked colour too, not a colour you lack; your best copy, a StatBoost first, a better one wins; legendary and locked marked; the Chimano's; labels; no Steam inventory: only what the game unlocked); a plain skin (worn, the copy's fields, the game's slot wears it, not locked, the price unchanged; again, not owned, not a weapon, no such weapon: no; any number of guns; a fitted part stays; a colour: its index and the default pattern; removed, again: no; logged); legendary (no room: nothing changes, said; its own parts, said, yours next to it, free in the price and the sale, locked against a part, a build and a fit, locked in the game's slot; a plain skin over it: the weapon's own parts; removed: own parts, unlocked; an unlocked legendary takes parts, removed it keeps them; its own parts free in the sale even if the game sells them); at home only (a heist: no change, no sweep; the armory off); in your hands (the same: not made again; a skin or colour: made again wearing it, the build key; removed: made again bare); a skin sold (no Steam inventory or all owned: nothing; sold: off at the menu with the weapon's own parts, logged; colours and unlockables stay; a colour no longer unlocked, a DLC not owned: off); the files (insured: comes back with its skin; the file keeps the skins of returns and captured, only true is a StatBoost); Sydney (her button, not in another room, the screen: your weapons, hands first, the side windows empty, its skins, a click, on it, fits 720p, Remove, none owned: said, Back, pages and back, fits 720p, Close, the inventory screen as before; the armory off: no button) |
+| `lobby_tests.lua` | 76 | 0.46.0: the lobby key (the game's key gets _pdti, logged, not twice; a new lobby marked PDTI not vanilla; the search, the friends' list and an invite PDTI only; another mod's later key suffixed again before each of the four; Epic too; a non-key left alone; no Epic class; hooks_net.lua installs once; mod.txt's three hooks; the receive hook), the host (hello to everyone, a PDTI player known and answered, the same version unsaid, resent every 2 s to who has not answered, kept at 14 s, removed at 15 s with the game's kick after the lobby's chat line, logged, once; no clock while loading, not verified or not in, then 15 s, a drop-in; the clock again after loading; a player who left forgotten, the next one in the slot checked afresh, also between two looks, a hello from the new one; another version said once to you only, kept; no answer to "I know you"; an odd sender; an empty hello), a client (hello to the host, the host's answer keeps you, other players ignored, the host's hello answered; a silent host: kept at 14 s, hello every 2 s, left at 15 s in the lobby with the dialog, logged, once, no more hellos, another host afresh; in a heist a warning once, no leaving, no more hellos; still loading; the host not verified), no checks (offline, no SuperBLT networking logged once, networking that cannot send, no session), the timer (started by a join and by entering a lobby, the game's returns passed on, once, every second while there is a session, stopped without, a failed look logged, no DelayedCalls) |
 | `silent_killer_tests.lua` | 71 | Momentum (HP limb, HE dozer and turret; not a body hit, a standard round or a cop), Second Wind ace (a melee kill fills the HP magazine; not standard, not without the kill), Optical Illusions (cloaker crits, the medic blocked only for a crit kill), The Professional (4.5 s, +20% only while stunned), Low Blow (the more hurt arm or leg, not black, not a body hit, body parts off; the medic from behind: within 10 m, not civilians, not from the front, 4 s), High Value Target (78 cm, fire within 2 s of a sure crit), Unseen Strike (dropped rounds, storing up to 20, damage clears, the box, R8), ammo off and restoration-mod |
 | `barrier_tests.lua` | 42 | Surefire (10 per AP headshot, cap 50 / 60, fade 3 / 4 s, cooldown 10 / 9 s, not HP, standard or civilians, penetrator counts), Body Expertise (3 / 9, only in vanilla's automatic scope, cap alone), the soak (before armour, after the game's own reductions, the rest goes on, used up without cooldown), the health window line, ammo off and restoration-mod |
 | `ghost_skills_tests.lua` | 43 | Cleaner (the case 2x2 / 2x1, deployables off, running with a body at 70%, walking 50%, other bags), ECM Specialist (stack 2, deployables off, a stack split when the skill is gone), Inner Pockets (2x3 / 6 kg, big while the skills are unknown, the third row and a regrown case moved, nothing overlaps), Sneaky Bastard (0 / 5 / 10% by speed, no cap above it, broken speed readings, the ace at run speed and above, the concealment dodge off, the menu stats, weight off), restoration-mod |
 | `brawler_tests.lua` | 43 | Frenzy (black limbs at 1 HP, the game's health is the sum, no suspension, the spill, first aid kit and doctor bag, Combat Doctor sees them, black again after a hit and after custody; the ace: the body, the head holds the rest, 75% of body hits, headshots whole, down and revive; the health cap and the ace's reduction off), Berserker (+10% per black part to +50%, the head not counted, bullets and turrets with the ace, not others' hits, with Frenzy, the low-health scaling off), body parts off and restoration-mod |
-| `perks_tests.lua` | 146 | Jacket (the charge x1.5 never past full, a kill heals the most hurt non-black part by 15% only at tier 3, not a hit, not another player's kill, nothing when all are full), Dallas (a doctor bag placed gives the revive back once, two revives at tier 3, nothing without the pick), Sangres (a first aid kit gets you up, a doctor bag does not, it heals like a kit once, the kit's time halved at tier 3, only with the medical rig), Rust (one more use from the rig only, the refill key: both guns, uses left on the item, full ammunition takes nothing, an empty bag is gone, the placed bag's uses), Houston (half and all of the rig's weight hidden from concealment, a given weight untouched, only with the general rig), Clover (2x2 and 2x4 slots, loot bags only and first, the view model, another backpack moves the bags, no room refuses), Joy (hacks 75%, a later multiplier keeps it, not twice, not drills or saws, the keycard once per heist), the safehouse room bonuses: the table (two rooms per piece, no room twice), picking (tier 1 refused with why, another piece's room, not made yet, no bonus refits the items), a saved choice that cannot count now, room tiers (the saved tier counts before the safehouse loads, never lowered, the game's set_room_tier remembered, a safehouse with no data not asked), each rig and backpack bonus (sizes, speed, weight, slowdown, focus; the game's definitions untouched), Bonnie's chances and rolls, Scarface's sell-now, the vault, John Wick's and Jiro's plates, Sydney's regeneration and Jimmy's half damage (light armour only, once per break) |
+| `perks_tests.lua` | 149 | Jacket (the charge x1.5 never past full, a kill heals the most hurt non-black part by 15% only at tier 3, not a hit, not another player's kill, nothing when all are full), Dallas (a doctor bag placed gives the revive back once, two revives at tier 3, nothing without the pick), Sangres (a first aid kit gets you up, a doctor bag does not, it heals like a kit once, the kit's time halved at tier 3, only with the medical rig), Rust (one more use from the rig only, the refill key: both guns, uses left on the item, full ammunition takes nothing, an empty bag is gone, the placed bag's uses), Houston (half and all of the rig's weight hidden from concealment, a given weight untouched, only with the general rig), Clover (2x2 and 2x4 slots, loot bags only and first, the view model, another backpack moves the bags, no room refuses), Joy (hacks 75%, a later multiplier keeps it, not twice, not drills or saws, the keycard once per heist), the safehouse room bonuses: the table (two rooms per piece, no room twice), picking (tier 1 refused with why, another piece's room, not made yet, no bonus refits the items), a saved choice that cannot count now, room tiers (the saved tier counts before the safehouse loads, never lowered, the game's set_room_tier remembered, a safehouse with no data not asked), each rig and backpack bonus (sizes, speed, weight, slowdown, focus; the game's definitions untouched), Bonnie's chances and rolls, Scarface's sell-now, the vault, John Wick's and Jiro's plates, Sydney's regeneration and Jimmy's half damage (light armour only, once per break); 0.45.0: Duke's insurance (30%/10 min below tier 2; 0.45.1: 20%/10 min at 2, 20%/5 min at 3; his room's lines; it replaces the not-made check) |
 | `yakuza_ehi_tests.lua` | 49 | Yakuza (no bonus with nothing black or at low health alone, a quarter per black limb, the body not counted, card 9 at 2 limbs, a doctor bag takes it away, suspended black counts, Frenzy, other categories untouched, body parts off and restoration-mod), EHI (registered on BuffsInit, the definitions and icons, barrier gauge and its cooldown, Doctor's orders set again on a new buff, the longest Painkillers suspension, overheal amount updated, Momentum and Ignite, timers left to EHI, removed when over, throttle, no EHI bar; EHI's Yakuza and Berserker with the reworked values and their fallbacks) |
 | `deployables_new_tests.lua` | 33 | a trip mine from the inventory as a shaped charge on a safe, the new deployables: items with a placement function and a price, offered in the menu only when the game has them; trip mine, ECM and spy camera checked on the wall, the throwable case like a bag, the sentry guns with the game's slot and unit (normal 1, suppressed 2), the armor kit without a spot; a client's sentry taken out when the host places it; no sentry ammo cost; a picked-up sentry back into the inventory, refused with no room; another mod's turret left to the game |
 
-3209 checks in total. These are code-level tests, not substitutes for in-game testing on a
+3786 checks in total. These are code-level tests, not substitutes for in-game testing on a
 clean PAYDAY 2 profile. The current environment cannot launch PAYDAY 2, so the runtime hook
 compatibility, the menu rendering and the multiplayer behavior remain unverified.
 

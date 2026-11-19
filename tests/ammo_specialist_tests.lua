@@ -467,9 +467,18 @@ do
   own({})
   T("no bag skill: boxes are picked up", AmmoClip._pickup({}, unit) == true and box_taken == 1)
   own({ ammo_reservoir = 1 })
+  hints = {}
+  AS.OnHeistStart()
   T("Bulletstorm: a standard box stays", AmmoClip._pickup({}, unit) == false and box_taken == 1)
+  T("  and the first one says why (0.44.0)", #hints == 1 and hints[1]:find("Bulletstorm: you can't pick up", 1, true) ~= nil,
+    hints[1])
+  AmmoClip._pickup({}, unit)
+  T("  once a heist", #hints == 1)
   own({ ammo_2x = 1 })
   T("Extra Lead: too", AmmoClip._pickup({}, unit) == false and box_taken == 1)
+  AS.OnHeistStart()
+  AmmoClip._pickup({}, unit)
+  T("  the next heist says it again, with its name", #hints == 2 and hints[2]:find("^Extra Lead:") ~= nil, hints[2])
   T("a grenade pickup is allowed", AmmoClip._pickup({ _projectile_id = "frag" }, unit) == true)
   T("an arrow-like pickup too", AmmoClip._pickup({ _weapon_category = "bow" }, unit) == true)
   local spoil = { _pdti_spoils = AS.SPOILS.medic, _unit = { set_slot = function() end } }

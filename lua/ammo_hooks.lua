@@ -807,16 +807,61 @@ function Ammo.BoxesFull(unit)
     return ok and full == true
 end
 
+-- Why a plain box stayed on the floor (0.44.0): each gun in your hands, and
+-- why it took nothing (not managed and why, or its room and pickup).
+function Ammo.BoxLeftReason(unit)
+    local parts = {}
+    local ok = pcall(function()
+        local list = {}
+        for sel, s in pairs(unit:inventory():available_selections() or {}) do list[#list + 1] = { sel = sel, s = s } end
+        table.sort(list, function(a, b) return tostring(a.sel) < tostring(b.sel) end)
+        for _, e in ipairs(list) do
+            local wep = e.s.unit and e.s.unit:base()
+            if wep then
+                local name = tostring(wep._name_id)
+                local why = wep._pdti_unarmed and "no weapon in your hands" or Ammo.SkipReason(wep)
+                if not why and not Ammo.Identify(wep) then why = "not known to the ammunition system" end
+                if why then
+                    parts[#parts + 1] = name .. ": " .. why
+                else
+                    local p = wep._ammo_pickup
+                    parts[#parts + 1] = string.format("%s: room %s, pickup %s-%s", name, tostring(Ammo.BoxRoom(wep)),
+                        tostring(type(p) == "table" and p[1] or "none"), tostring(type(p) == "table" and p[2] or "none"))
+                end
+            end
+        end
+    end)
+    if not ok then parts[#parts + 1] = "the guns could not be read" end
+    if #parts == 0 then parts[1] = "no gun" end
+    local AS = PDTI.AmmoSkills
+    if AS and AS.BagPath and AS.BagPath() then parts[#parts + 1] = "Bulletstorm or Extra Lead (no standard boxes)" end
+    return table.concat(parts, "; ")
+end
+
+-- Logged once per reason (and worked out once per box).
+Ammo.box_reasons = Ammo.box_reasons or {}
+local function report_box_left(box, unit)
+    if box._pdti_left_told then return end
+    box._pdti_left_told = true
+    local why = Ammo.BoxLeftReason(unit)
+    if Ammo.box_reasons[why] then return end
+    Ammo.box_reasons[why] = true
+    log("an ammo box stayed on the floor: " .. why)
+end
+
 -- A plain ammo box (not a throwable, not one weapon's arrows) is left on
 -- the floor when both guns are at the limit. (restoration-mod would take it
 -- anyway when your grenades are not full.)
 local function make_box_pickup_hook(orig)
     return function(self, unit, ...)
-        if Ammo.On() and not self._projectile_id and not self._weapon_category
-            and unit ~= nil and unit == Ammo.PlayerUnit() and Ammo.BoxesFull(unit) then
+        local plain = Ammo.On() and not self._projectile_id and not self._weapon_category
+            and unit ~= nil and unit == Ammo.PlayerUnit()
+        if plain and Ammo.BoxesFull(unit) then
             return false
         end
-        return orig(self, unit, ...)
+        local picked = orig(self, unit, ...)
+        if plain and not picked and not self._picked_up then pcall(report_box_left, self, unit) end
+        return picked
     end
 end
 

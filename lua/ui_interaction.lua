@@ -317,6 +317,26 @@ function PDTI.UIGetSlotDrag()
         part_id = slot_drag.part_id, ptype = slot_drag.ptype, rotated = slot_drag.rotated }
 end
 
+-- The weapons a held part goes on (0.44.0): every weapon of yours, wherever
+-- it is, whose kind the game lets take the part (one that has it already
+-- too). { [container] = { [instance_id] = true } }, or nil when the item
+-- held is not a part. The screen marks them green while the part is dragged.
+function PDTI.UIFitWeapons()
+    local P, A = PDTI.Parts, PDTI.Armory
+    if not held or not P or not A or held.item_id ~= P.ITEM_ID then return nil end
+    local part = PDTI.FindItem(held.container, held.instance_id)
+    local part_id = part and type(part.data) == "table" and part.data.part_id
+    if type(part_id) ~= "string" then return nil end
+    local out = {}
+    for _, e in ipairs(PDTI.FindItems(function(_, it) return it.item_id == A.ITEM_ID and type(it.data) == "table" end)) do
+        if P.Takes(e.item.data.weapon_id, part_id) then
+            out[e.container] = out[e.container] or {}
+            out[e.container][e.item.instance_id] = true
+        end
+    end
+    return out
+end
+
 -- A press on a slot: its part starts coming off (when it can).
 function PDTI.UISlotDragStart(slot)
     held, drag, slot_drag = nil, nil, nil

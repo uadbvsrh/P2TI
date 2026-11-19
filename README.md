@@ -22,6 +22,12 @@ have consequences.
 - **A physical inventory.**
   - Grid backpacks, tactical rigs and quick-access pockets.
   - Items have a size and a weight. You arrange them, rotate them and choose where they go.
+- **Your guns are yours.**
+  - You own the weapons (the market at Scarface's) and the parts on them.
+  - A weapon's view shows the weapon itself in the middle, with its slots around it: the
+    sights and the gadgets on top of it, the grip, the foregrip and the stock under it.
+  - A build you like can be saved as a **template** and put on another gun of the same kind.
+    The parts stay yours: a template is a recipe, not a copy of the parts.
 - **The inventory is the supply.**
   - Magazines and loose rounds are real items. You reload from the magazines you carry, and
     you fill them round by round.

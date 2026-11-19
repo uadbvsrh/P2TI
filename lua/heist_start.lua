@@ -20,7 +20,11 @@ Hooks:PostHook(GameSetup, "init_finalize", "PDTI_heist_start", function()
     if pdti.Safehouse and pdti.Safehouse.OnLevelStart then pcall(pdti.Safehouse.OnLevelStart) end
     -- The safehouse is not a heist: the inventory stays as it is saved, and
     -- nothing is restocked, cleared or reset.
-    if pdti.InSafehouse and pdti.InSafehouse() then return end
+    if pdti.InSafehouse and pdti.InSafehouse() then
+        -- The safehouse shows the damage the last heist left (body_lasting.lua).
+        if pdti.BodyLasting then pcall(pdti.BodyLasting.OnLevelStart) end
+        return
+    end
     -- The plan was paid for in the menu; what this heist uses up of it is
     -- paid again as it is used (Plan.RestockTick).
     if pdti.Plan and pdti.Plan.StartRestock then pcall(pdti.Plan.StartRestock) end
@@ -38,4 +42,7 @@ Hooks:PostHook(GameSetup, "init_finalize", "PDTI_heist_start", function()
     if pdti.Barrier and pdti.Barrier.OnHeistStart then pdti.Barrier.OnHeistStart() end
     if pdti.GhostSkills and pdti.GhostSkills.OnHeistStart then pdti.GhostSkills.OnHeistStart() end
     if pdti.Armour and pdti.Armour.OnHeistStart then pdti.Armour.OnHeistStart() end
+    -- After Body.OnHeistStart: the first spawn starts with the damage the
+    -- last heist left (body_lasting.lua).
+    if pdti.BodyLasting then pcall(pdti.BodyLasting.OnLevelStart) end
 end)
